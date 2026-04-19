@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "キブンヤ",
+    "slug": "kibunya",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "kibunya",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF9EC"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kibunya.app",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSUserNotificationUsageDescription": "友達からの「いきますかー」通知を受け取るために使用します。"
+      }
+    },
+    "android": {
+      "package": "com.kibunya.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFF9EC"
+      },
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-apple-authentication"
+    ],
+    "notification": {
+      "color": "#E8391F"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_AFTER_EAS_INIT"
+      }
+    }
+  }
+}
