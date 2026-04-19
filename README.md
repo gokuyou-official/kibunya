@@ -95,37 +95,61 @@ npm install
 npm install -g eas-cli firebase-tools
 ```
 
-### 3. Firebase プロジェクト作成
+### 3. Firebase プロジェクト作成 & Firestore デプロイ
 ```bash
 firebase login
-firebase projects:create kibunya-app --display-name "KIBUNYA"
+firebase projects:create kibunya-app --display-name "キブンヤ"
 firebase use kibunya-app
-firebase init firestore   # firestore.rules を指定
-firebase deploy --only firestore:rules
+firebase deploy --only firestore:rules,firestore:indexes
 ```
+> `firestore.rules` / `firestore.indexes.json` はリポジトリ直下に同梱済みなので `firebase init` は不要。
 
-### 4. Firebase iOS / Android アプリ登録
-Firebase Console → プロジェクト設定 → アプリを追加
-- iOS: bundleId = `com.kibunya.app`
-- Android: package = `com.kibunya.app`
+### 4. Firebase Web アプリ登録 & `.env` 作成
+本アプリは Expo (JS バンドル) から Firebase Web SDK を直接叩く構成 (`src/config/firebase.ts`)。したがって **iOS/Android ネイティブアプリではなく Web アプリとして登録** し、その config を `.env` に入れる。
 
-取得した config を `.env` に書き込む(`.env.example` 参照):
 ```bash
-EXPO_PUBLIC_FIREBASE_API_KEY=xxx
-EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=kibunya-app.firebaseapp.com
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=kibunya-app
-EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=kibunya-app.appspot.com
-EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=xxx
-EXPO_PUBLIC_FIREBASE_APP_ID=xxx
+firebase apps:create WEB kibunya-web
+firebase apps:sdkconfig WEB --json
 ```
 
-### 5. Firebase Console で手動設定
-- **Authentication** → Sign-in method
-  - ✅ Apple を有効化
-  - ✅ Email/Password を有効化
-- **Cloud Messaging** (iOS用APNsキーをアップロード)
-  - Apple Developer → Keys → APNs Authentication Key作成 (.p8)
-  - Firebase Console → Project Settings → Cloud Messaging → iOS APNs → アップロード
+出力された `sdkConfig` の各値を `.env` に転記:
+```bash
+cp .env.example .env
+# エディタで .env を開いて実値を貼り付け
+```
+
+対応関係:
+| firebaseConfig キー | `.env` の変数 |
+|---|---|
+| `apiKey` | `EXPO_PUBLIC_FIREBASE_API_KEY` |
+| `authDomain` | `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN` |
+| `projectId` | `EXPO_PUBLIC_FIREBASE_PROJECT_ID` |
+| `storageBucket` | `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET` |
+| `messagingSenderId` | `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` |
+| `appId` | `EXPO_PUBLIC_FIREBASE_APP_ID` |
+
+### 5. Firebase Console で手動設定 (CLI 非対応)
+Firebase CLI では認証プロバイダを有効化できないため、以下は Console (https://console.firebase.google.com/project/kibunya-app) で実施:
+
+#### 5-1. Authentication プロバイダ有効化
+**Build → Authentication → Sign-in method** タブを開き、以下を有効化:
+- ✅ **メール/パスワード** (「メール/パスワード」を選択 → 有効にする → 保存)
+- ✅ **Apple**
+  - Services ID: Apple Developer で作成した Service ID (例: `com.kibunya.app.signin`)
+  - Apple Team ID / Key ID / 秘密鍵 (`.p8`) を入力
+  - 詳細手順: https://firebase.google.com/docs/auth/ios/apple
+
+> Apple Sign In 用の Service ID / Key 発行は Apple Developer Portal (Keys / Identifiers) で事前に行う必要がある。Apple Developer Program ($99/年) への登録が前提。
+
+#### 5-2. 承認済みドメイン
+**Authentication → Settings → 承認済みドメイン** に以下を追加:
+- `localhost` (開発デフォルトで入っている)
+- Expo Go で使う場合は `auth.expo.io`
+
+#### 5-3. Cloud Messaging (iOS プッシュ通知用)
+- Apple Developer → Keys → **APNs Authentication Key** を作成 (`.p8`)
+- Firebase Console → **Project Settings → Cloud Messaging → Apple app configuration** → APNs 認証キーをアップロード
+- Team ID / Key ID も入力
 
 ### 6. アセット追加
 `assets/` に以下を配置:
@@ -168,10 +192,11 @@ eas submit --platform ios
 | 項目 | 備考 |
 |---|---|
 | Apple Developer Program 登録 ($99/年) | https://developer.apple.com/programs/enroll/ |
-| Firebase Console で Apple/Email 認証を有効化 | 上記STEP5 |
-| Cloud Messaging 用 APNs キーアップロード | 上記STEP5 |
+| Apple Developer で Service ID / APNs Key (`.p8`) を発行 | Apple Sign In / プッシュ通知用 |
+| Firebase Console で Apple/Email 認証を有効化 | 上記STEP5-1 (CLI 非対応) |
+| Firebase Console で APNs キーをアップロード | 上記STEP5-3 |
 | アセット画像を `assets/` に置く | 上記STEP6 |
-| `.env` に Firebase config を記入 | 上記STEP4 |
+| `.env` に Firebase Web SDK config を記入 | 上記STEP4 |
 
 ---
 
