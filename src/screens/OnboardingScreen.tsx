@@ -68,7 +68,7 @@ export default function OnboardingScreen() {
 
           <Text style={styles.kicker}>KIBUNYA</Text>
           <Text style={styles.headline}>
-            気分だけ、置いておく。
+            誘ってないけど知っている
           </Text>
           <Text style={styles.sub}>
             誘ってないから大丈夫。{'\n'}同じ気分の友達が来たら、乾杯。

@@ -84,9 +84,7 @@ export default function HomeScreen({ navigation }: any) {
         if (f.fcmToken) tokens.push(f.fcmToken);
       }
       if (tokens.length > 0) {
-        const body = area.trim()
-          ? `${myName}さんが${activity.label}の気分(${area.trim()})${activity.waitEmoji}`
-          : `${myName}さんが${activity.label}の気分${activity.waitEmoji}`;
+        const body = `${myName}さん、いきますかー${activity.waitEmoji}`;
         await sendPushNotification(tokens, 'KIBUNYA', body);
       }
       setOverlay(true);

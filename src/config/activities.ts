@@ -20,15 +20,15 @@ export const ACTIVITIES: ActivityDef[] = [
     label: 'ちょい飲み',
     waitEmoji: '🍺',
     matchEmoji: '🍻',
-    sendCopy: 'ちょい飲みの気分？',
-    waitCopy: '誘ってないから大丈夫。気分を置いておくだけ。',
+    sendCopy: 'ちょい飲みの気分?',
+    waitCopy: '誘ってないけど知っている',
   },
   {
     id: 'sauna',
     label: 'サウナ',
     waitEmoji: '🧖‍♀️',
     matchEmoji: '♨️',
-    sendCopy: 'サウナの気分？',
+    sendCopy: 'サウナの気分?',
     waitCopy: '整いたいだけ。誰かが来たら一緒に整う。',
   },
   {
@@ -36,7 +36,7 @@ export const ACTIVITIES: ActivityDef[] = [
     label: 'ランチ',
     waitEmoji: '🍜',
     matchEmoji: '🍽️',
-    sendCopy: 'ランチの気分？',
+    sendCopy: 'ランチの気分?',
     waitCopy: 'お腹すいた。誰かと食べたい気分。',
   },
   {
@@ -44,7 +44,7 @@ export const ACTIVITIES: ActivityDef[] = [
     label: '麻雀',
     waitEmoji: '🀄',
     matchEmoji: '💸',
-    sendCopy: '麻雀の気分？',
+    sendCopy: '麻雀の気分?',
     waitCopy: '卓を囲みたいだけ。誰か来たら打つ。',
   },
 ];
