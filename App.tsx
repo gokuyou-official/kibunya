@@ -1,7 +1,7 @@
 // キブンヤ エントリーポイント(v2: 興味ベースゲート + プロフィールタブ)
 import 'react-native-gesture-handler';
-import React, { useEffect, useMemo, useRef } from 'react';
-import { View, ActivityIndicator, StyleSheet, AppState } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import {
   NavigationContainer,
   createNavigationContainerRef,
@@ -11,7 +11,6 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
-import { Text } from 'react-native';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 import { colors } from './src/config/colors';
@@ -174,14 +173,48 @@ function Root() {
     [profile.interests, enabledIds],
   );
 
+  // 自動初期化のリトライ管理: Firestore 書き込み失敗時にスピナーが永遠に
+  // 回り続けるのを防ぐ。3秒以内に visibleIds が埋まらない / Promise が
+  // reject された場合はエラー画面に遷移し、再試行ボタンを提示する。
+  // 3回連続失敗したら InterestSelectionScreen にフォールバック。
+  const INIT_TIMEOUT_MS = 3000;
+  const MAX_INIT_ATTEMPTS = 3;
+  const [initAttempt, setInitAttempt] = useState(0);
+  const [initError, setInitError] = useState(false);
+
+  const triggerInit = useCallback(() => {
+    setInitError(false);
+    setInitAttempt((n) => n + 1);
+    setInterests(enabledIds).catch((e) => {
+      console.warn('auto-init interests failed', e);
+      setInitError(true);
+    });
+  }, [setInterests, enabledIds]);
+
+  // 初回トリガー: 条件を満たし、まだ試行していない場合のみ実行
   useEffect(() => {
     if (!currentUser || profileLoading) return;
-    if (enabledIds.length === 1 && visibleIds.length === 0) {
-      setInterests(enabledIds).catch((e) =>
-        console.warn('auto-init interests failed', e),
-      );
-    }
-  }, [currentUser, profileLoading, enabledIds, visibleIds.length, setInterests]);
+    if (enabledIds.length !== 1) return;
+    if (visibleIds.length > 0) return;
+    if (initAttempt > 0) return;
+    triggerInit();
+  }, [
+    currentUser,
+    profileLoading,
+    enabledIds.length,
+    visibleIds.length,
+    initAttempt,
+    triggerInit,
+  ]);
+
+  // タイムアウト検知: 試行中なのに INIT_TIMEOUT_MS 経過しても visibleIds が
+  // 埋まらない場合、Firestore リスナー反映遅延 or 書き込み失敗とみなしエラー化
+  useEffect(() => {
+    if (initAttempt === 0 || initError) return;
+    if (visibleIds.length > 0) return;
+    const t = setTimeout(() => setInitError(true), INIT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [initAttempt, initError, visibleIds.length]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -244,6 +277,34 @@ function Root() {
   //  visibleIds=[] となり同じ自動初期化フローに乗る)
   if (visibleIds.length === 0) {
     if (enabledIds.length === 1) {
+      // 3回連続失敗したら最終救済として InterestSelectionScreen に強制フォールバック
+      // (Firestore 書き込み権限の問題等で自動初期化が継続的に失敗するケース)
+      if (initError && initAttempt >= MAX_INIT_ATTEMPTS) {
+        return <InterestSelectionScreen />;
+      }
+      if (initError) {
+        return (
+          <View style={styles.errorScreen}>
+            <Text style={styles.errorEmoji}>⚠️</Text>
+            <Text style={styles.errorTitle}>初期化に失敗しました</Text>
+            <Text style={styles.errorSub}>
+              通信状況をご確認のうえ、再試行してください。
+            </Text>
+            <Pressable
+              onPress={triggerInit}
+              style={({ pressed }) => [
+                styles.retryBtn,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <Text style={styles.retryText}>もう一度試す</Text>
+            </Pressable>
+            <Text style={styles.errorAttempt}>
+              試行 {initAttempt} / {MAX_INIT_ATTEMPTS}
+            </Text>
+          </View>
+        );
+      }
       return (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.shu} />
@@ -286,5 +347,44 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ai,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  errorScreen: {
+    flex: 1,
+    backgroundColor: colors.ai,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  errorEmoji: {
+    fontSize: 56,
+    marginBottom: 4,
+  },
+  errorTitle: {
+    fontSize: 18,
+    color: colors.cream,
+    fontWeight: '600',
+  },
+  errorSub: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryBtn: {
+    backgroundColor: colors.shu,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 16,
+  },
+  retryText: {
+    color: colors.cream,
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  errorAttempt: {
+    fontSize: 11,
+    color: colors.textLight,
+    marginTop: 8,
   },
 });
