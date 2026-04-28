@@ -46,13 +46,22 @@ export default function MatchOverlay({ visible, senderName, activityId, onClose 
         duration: 200,
         useNativeDriver: true,
       }),
-      // t=0: matchEmoji bounce scale (spring)
-      Animated.spring(emojiScale, {
-        toValue: 1,
-        friction: 4,
-        tension: 140,
-        useNativeDriver: true,
-      }),
+      // t=0: matchEmoji 明示的なオーバーシュート 0.4 → 1.2 → 1.0
+      // pulse loop は採用せず登場時のオーバーシュートのみで祝祭感を出す (Option B)
+      Animated.sequence([
+        Animated.timing(emojiScale, {
+          toValue: 1.2,
+          duration: 250,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(emojiScale, {
+          toValue: 1.0,
+          friction: 6,
+          tension: 120,
+          useNativeDriver: true,
+        }),
+      ]),
       // t=100ms: 「かー」 slide-down + fade-in
       Animated.sequence([
         Animated.delay(100),
