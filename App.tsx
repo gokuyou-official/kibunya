@@ -1,12 +1,16 @@
 // キブンヤ エントリーポイント(v2: 興味ベースゲート + プロフィールタブ)
 import 'react-native-gesture-handler';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet, AppState } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  createNavigationContainerRef,
+} from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
+import * as Notifications from 'expo-notifications';
 import { Text } from 'react-native';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -31,12 +35,23 @@ import InterestSelectionScreen from './src/screens/InterestSelectionScreen';
 
 const Tab = createBottomTabNavigator();
 
+// プッシュ通知タップから NavigationContainer の外でナビゲーションを呼ぶための ref
+export const navigationRef = createNavigationContainerRef();
+
+function navigateToNotifications(highlightId?: string) {
+  if (!navigationRef.isReady()) return;
+  navigationRef.navigate('Notifications' as never, (highlightId ? { highlightId } : undefined) as never);
+}
+
 const linking = {
   prefixes: [Linking.createURL('/'), 'kibunya://'],
   config: {
     screens: {
       Home: 'home',
-      Notifications: 'notifications',
+      Notifications: {
+        path: 'notifications',
+        parse: { highlightId: (v: string) => v },
+      },
       Friends: 'friends',
       Profile: 'profile',
     },
@@ -113,9 +128,38 @@ function MainTabs() {
 function Root() {
   const { currentUser, loading } = useAuth();
   const { profile, loading: profileLoading, setInterests } = useProfile(currentUser?.uid);
+  // コールドスタート時に取得した通知タップ情報を保持。
+  // ナビゲーション準備が整い次第アラートタブに遷移する。
+  const pendingNavRef = useRef<{ notificationId?: string } | null>(null);
 
   useEffect(() => {
     setupNotificationHandlers();
+  }, []);
+
+  // プッシュ通知タップ → アラートタブへ遷移
+  useEffect(() => {
+    // バックグラウンド/フォアグラウンドからのタップ
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response?.notification?.request?.content?.data ?? {};
+      const notificationId =
+        typeof data?.notificationId === 'string' ? data.notificationId : undefined;
+      if (navigationRef.isReady()) {
+        navigateToNotifications(notificationId);
+      } else {
+        pendingNavRef.current = { notificationId };
+      }
+    });
+
+    // コールドスタート: アプリが通知タップで起動された場合
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (!response) return;
+      const data = response.notification?.request?.content?.data ?? {};
+      const notificationId =
+        typeof data?.notificationId === 'string' ? data.notificationId : undefined;
+      pendingNavRef.current = { notificationId };
+    });
+
+    return () => sub.remove();
   }, []);
 
   // MVP: enabled なアクティビティが1つだけのとき、興味未設定ユーザーは
@@ -201,7 +245,18 @@ function Root() {
   }
 
   return (
-    <NavigationContainer linking={linking}>
+    <NavigationContainer
+      ref={navigationRef}
+      linking={linking}
+      onReady={() => {
+        // コールドスタートで pending な通知タップがあれば反映
+        const pending = pendingNavRef.current;
+        if (pending) {
+          pendingNavRef.current = null;
+          navigateToNotifications(pending.notificationId);
+        }
+      }}
+    >
       <MainTabs />
     </NavigationContainer>
   );

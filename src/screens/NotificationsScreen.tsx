@@ -1,5 +1,5 @@
 // 通知一覧画面(v2: 興味でフィルタ、activity/matchEmoji を reactToNotification に渡す)
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import { db } from '../config/firebase';
 import NotificationCard from '../components/NotificationCard';
 import { getActivity } from '../config/activities';
 
-export default function NotificationsScreen() {
+export default function NotificationsScreen({ route }: any) {
   const { currentUser } = useAuth();
   const { profile } = useProfile(currentUser?.uid);
   const {
@@ -26,6 +26,31 @@ export default function NotificationsScreen() {
     loading,
     reactToNotification,
   } = useNotifications(currentUser?.uid, profile.interests);
+
+  // プッシュタップで指定された通知 ID にスクロール / 一時ハイライト
+  const listRef = useRef<FlatList<any>>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(
+    route?.params?.highlightId ?? null,
+  );
+
+  useEffect(() => {
+    const id = route?.params?.highlightId;
+    if (id) setHighlightId(id);
+  }, [route?.params?.highlightId]);
+
+  useEffect(() => {
+    if (!highlightId || notifications.length === 0) return;
+    const idx = notifications.findIndex((n) => n.id === highlightId);
+    if (idx >= 0) {
+      // FlatList の描画完了を待ってからスクロール
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+      });
+      // 2.5秒後にハイライト解除
+      const t = setTimeout(() => setHighlightId(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [highlightId, notifications]);
 
   const handleReact = useCallback(
     async (
@@ -76,14 +101,26 @@ export default function NotificationsScreen() {
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={notifications}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          onScrollToIndexFailed={({ index, averageItemLength }) => {
+            // フォールバック: 概算 offset で再スクロール
+            listRef.current?.scrollToOffset({
+              offset: Math.max(0, index * (averageItemLength || 80)),
+              animated: true,
+            });
+          }}
           renderItem={({ item }) => (
-            <NotificationCard
-              notification={item}
-              onReact={() => handleReact(item.id, item.senderId, item.activity)}
-            />
+            <View
+              style={highlightId === item.id ? styles.highlightWrap : undefined}
+            >
+              <NotificationCard
+                notification={item}
+                onReact={() => handleReact(item.id, item.senderId, item.activity)}
+              />
+            </View>
           )}
         />
       )}
@@ -125,6 +162,13 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 16,
     paddingBottom: 24,
+  },
+  highlightWrap: {
+    borderRadius: 16,
+    backgroundColor: 'rgba(245,197,24,0.18)',
+    borderWidth: 1,
+    borderColor: colors.yamabuki,
+    marginVertical: 4,
   },
   empty: {
     flex: 1,

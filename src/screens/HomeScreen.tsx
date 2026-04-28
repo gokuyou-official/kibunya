@@ -75,9 +75,12 @@ export default function HomeScreen({ navigation }: any) {
       const myName = profile.name || 'フレンド';
       // 友達全員(興味に activeId を持つ人だけ受信する設計だが、
       // FCM送信時は全員にtoken送る。通知フィルタは受信側で useNotifications が担う)
+      // tokens と notificationIds を同じインデックスで保持し、
+      // 受信側がタップしたときに自分宛の Firestore notification doc に飛べるようにする
       const tokens: string[] = [];
+      const notificationIds: string[] = [];
       for (const f of friends) {
-        await addDoc(collection(db, 'notifications'), {
+        const docRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUser.uid,
           senderName: myName,
           receiverId: f.id,
@@ -88,11 +91,17 @@ export default function HomeScreen({ navigation }: any) {
           isRead: false,
           reactedBy: null,
         });
-        if (f.fcmToken) tokens.push(f.fcmToken);
+        if (f.fcmToken) {
+          tokens.push(f.fcmToken);
+          notificationIds.push(docRef.id);
+        }
       }
       if (tokens.length > 0) {
         const body = `${myName}さん、いきますかー${activity.waitEmoji}`;
-        await sendPushNotification(tokens, 'KIBUNYA', body);
+        await sendPushNotification(tokens, 'KIBUNYA', body, {
+          notificationIds,
+          type: 'kibun',
+        });
       }
       setOverlay(true);
       setWaiting(true);
