@@ -18,6 +18,7 @@ import { db } from './src/config/firebase';
 import { useAuth } from './src/hooks/useAuth';
 import { useNotifications } from './src/hooks/useNotifications';
 import { useProfile } from './src/hooks/useProfile';
+import { useMatchEvents } from './src/hooks/useMatchEvents';
 import {
   registerForPushNotifications,
   setupNotificationHandlers,
@@ -31,6 +32,7 @@ import NotificationsScreen from './src/screens/NotificationsScreen';
 import FriendsScreen from './src/screens/FriendsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import InterestSelectionScreen from './src/screens/InterestSelectionScreen';
+import MatchOverlay from './src/components/MatchOverlay';
 
 const Tab = createBottomTabNavigator();
 
@@ -127,6 +129,10 @@ function MainTabs() {
 function Root() {
   const { currentUser, loading } = useAuth();
   const { profile, loading: profileLoading, setInterests } = useProfile(currentUser?.uid);
+  // マッチ後オーバーレイ用イベントキュー (Issue #4)
+  // ナビゲーションツリー外で render するため Root に保持し、
+  // どのタブ/画面にいてもグローバルに重ねて表示できるようにする。
+  const { current: matchEvent, dismiss: dismissMatch } = useMatchEvents(currentUser?.uid);
   // コールドスタート時に取得した通知タップ情報を保持。
   // ナビゲーション準備が整い次第アラートタブに遷移する。
   const pendingNavRef = useRef<{ notificationId?: string } | null>(null);
@@ -315,20 +321,34 @@ function Root() {
   }
 
   return (
-    <NavigationContainer
-      ref={navigationRef}
-      linking={linking}
-      onReady={() => {
-        // コールドスタートで pending な通知タップがあれば反映
-        const pending = pendingNavRef.current;
-        if (pending) {
-          pendingNavRef.current = null;
-          navigateToNotifications(pending.notificationId);
-        }
-      }}
-    >
-      <MainTabs />
-    </NavigationContainer>
+    <>
+      <NavigationContainer
+        ref={navigationRef}
+        linking={linking}
+        onReady={() => {
+          // コールドスタートで pending な通知タップがあれば反映
+          const pending = pendingNavRef.current;
+          if (pending) {
+            pendingNavRef.current = null;
+            navigateToNotifications(pending.notificationId);
+          }
+        }}
+      >
+        <MainTabs />
+      </NavigationContainer>
+      {/*
+        MatchOverlay はナビゲーションツリーの外に置く。
+        どのタブにいても重ねて表示でき、画面遷移の影響を受けない。
+        useMatchEvents が dedup 済みのキューを返すため、ここでは
+        current を visible に流すだけ。
+      */}
+      <MatchOverlay
+        visible={!!matchEvent}
+        senderName={matchEvent?.senderName ?? ''}
+        activityId={matchEvent?.activity ?? 'drinking'}
+        onClose={dismissMatch}
+      />
+    </>
   );
 }
 
