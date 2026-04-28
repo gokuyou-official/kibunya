@@ -70,9 +70,6 @@ export default function OnboardingScreen() {
           <Text style={styles.headline}>
             誘ってないけど知っている
           </Text>
-          <Text style={styles.sub}>
-            誘ってないから大丈夫。{'\n'}同じ気分の友達が来たら、乾杯。
-          </Text>
 
           <View style={styles.actions}>
             {Platform.OS === 'ios' && (
@@ -197,12 +194,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 34,
     paddingHorizontal: 6,
-  },
-  sub: {
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-    lineHeight: 20,
     marginBottom: 12,
   },
   actions: {
