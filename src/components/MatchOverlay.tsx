@@ -14,6 +14,19 @@ import {
 import { colors } from '../config/colors';
 import { ActivityId, getActivity } from '../config/activities';
 
+// サブ表示の senderName 最大文字数。超えた分は '…' に置換する。
+// 「(senderName)さんから」のレイアウト崩れ・改行を防ぐため。
+// この値を変えるだけで省略しきい値を調整可能。
+const MAX_SENDER_NAME_LENGTH = 13;
+
+function formatSubText(senderName: string): string {
+  const trimmed =
+    senderName.length > MAX_SENDER_NAME_LENGTH
+      ? `${senderName.slice(0, MAX_SENDER_NAME_LENGTH)}…`
+      : senderName;
+  return `${trimmed}さんから`;
+}
+
 type Props = {
   visible: boolean;
   senderName: string;
@@ -118,8 +131,11 @@ export default function MatchOverlay({ visible, senderName, activityId, onClose 
           かー
         </Animated.Text>
 
-        <Animated.Text style={[styles.sub, { opacity: subOpacity }]}>
-          {senderName}から
+        <Animated.Text
+          style={[styles.sub, { opacity: subOpacity }]}
+          numberOfLines={1}
+        >
+          {formatSubText(senderName)}
         </Animated.Text>
 
         <Pressable onPress={handleClose} style={styles.closeBtn}>
