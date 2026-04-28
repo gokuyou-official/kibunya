@@ -20,6 +20,7 @@ import {
   setupNotificationHandlers,
 } from './src/utils/pushNotifications';
 import { handleInviteLink } from './src/utils/inviteLink';
+import { getEnabledActivityIds } from './src/config/activities';
 
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -111,11 +112,24 @@ function MainTabs() {
 
 function Root() {
   const { currentUser, loading } = useAuth();
-  const { profile, loading: profileLoading } = useProfile(currentUser?.uid);
+  const { profile, loading: profileLoading, setInterests } = useProfile(currentUser?.uid);
 
   useEffect(() => {
     setupNotificationHandlers();
   }, []);
+
+  // MVP: enabled なアクティビティが1つだけのとき、興味未設定ユーザーは
+  // InterestSelectionScreen を経由せず自動で初期化する。
+  // (v1.1 で enabled が複数になれば自動で従来のゲートが復活する)
+  useEffect(() => {
+    if (!currentUser || profileLoading) return;
+    const enabledIds = getEnabledActivityIds();
+    if (enabledIds.length === 1 && profile.interests.length === 0) {
+      setInterests(enabledIds).catch((e) =>
+        console.warn('auto-init interests failed', e),
+      );
+    }
+  }, [currentUser, profileLoading, profile.interests, setInterests]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -172,8 +186,17 @@ function Root() {
     );
   }
 
-  // 興味未選択ならゲート
+  // 興味未選択ならゲート (enabled が複数あるときのみ)
+  // enabled が1つの場合は上の useEffect が自動で interests を埋めるため、
+  // ここではローディング表示を出して書き込み完了を待つ。
   if (profile.interests.length === 0) {
+    if (getEnabledActivityIds().length === 1) {
+      return (
+        <View style={styles.loading}>
+          <ActivityIndicator color={colors.shu} />
+        </View>
+      );
+    }
     return <InterestSelectionScreen />;
   }
 

@@ -19,7 +19,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { colors } from '../config/colors';
-import { ActivityId, getActivity } from '../config/activities';
+import { ActivityId, getActivity, getEnabledActivityIds } from '../config/activities';
 import { useAuth } from '../hooks/useAuth';
 import { useFriends } from '../hooks/useFriends';
 import { useProfile } from '../hooks/useProfile';
@@ -34,16 +34,23 @@ export default function HomeScreen({ navigation }: any) {
   const { profile } = useProfile(currentUser?.uid);
   const { friends } = useFriends(currentUser?.uid);
 
-  // アクティブタブ: interests 先頭をデフォルトに
+  // 表示対象: ユーザーの interests と enabled の積集合
+  const visibleIds = useMemo<ActivityId[]>(() => {
+    const enabled = new Set(getEnabledActivityIds());
+    return profile.interests.filter((id) => enabled.has(id));
+  }, [profile.interests]);
+  const singleActivity = visibleIds.length === 1;
+
+  // アクティブタブ: visibleIds 先頭をデフォルトに
   const [activeId, setActiveId] = useState<ActivityId | null>(null);
   useEffect(() => {
-    if (!activeId && profile.interests.length > 0) {
-      setActiveId(profile.interests[0]);
+    if (!activeId && visibleIds.length > 0) {
+      setActiveId(visibleIds[0]);
     }
-    if (activeId && !profile.interests.includes(activeId)) {
-      setActiveId(profile.interests[0] ?? null);
+    if (activeId && !visibleIds.includes(activeId)) {
+      setActiveId(visibleIds[0] ?? null);
     }
-  }, [profile.interests, activeId]);
+  }, [visibleIds, activeId]);
 
   // 送信後の「待ちますかー」状態
   const [waiting, setWaiting] = useState(false);
@@ -101,8 +108,8 @@ export default function HomeScreen({ navigation }: any) {
     setWaiting(false);
   };
 
-  // 興味が未設定の場合
-  if (profile.interests.length === 0) {
+  // 表示可能なアクティビティが無い場合 (interests 未設定 or enabled なものが無い)
+  if (visibleIds.length === 0) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.empty}>
@@ -142,16 +149,18 @@ export default function HomeScreen({ navigation }: any) {
         </Pressable>
       </View>
 
-      <View style={styles.tabRow}>
-        <ActivityTab
-          availableIds={profile.interests}
-          activeId={activeId}
-          onChange={(id) => {
-            setActiveId(id);
-            setWaiting(false);
-          }}
-        />
-      </View>
+      {!singleActivity && (
+        <View style={styles.tabRow}>
+          <ActivityTab
+            availableIds={visibleIds}
+            activeId={activeId}
+            onChange={(id) => {
+              setActiveId(id);
+              setWaiting(false);
+            }}
+          />
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -161,8 +170,10 @@ export default function HomeScreen({ navigation }: any) {
           contentContainerStyle={styles.center}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.emojiBox}>
-            <Text style={styles.emoji}>{activity.waitEmoji}</Text>
+          <View style={[styles.emojiBox, singleActivity && styles.emojiBoxLarge]}>
+            <Text style={[styles.emoji, singleActivity && styles.emojiLarge]}>
+              {activity.waitEmoji}
+            </Text>
           </View>
 
           <Text style={styles.title}>
@@ -313,7 +324,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  emojiBoxLarge: {
+    width: 200,
+    height: 200,
+    borderRadius: 48,
+    marginTop: 8,
+    marginBottom: 16,
+  },
   emoji: { fontSize: 72 },
+  emojiLarge: { fontSize: 110 },
   title: {
     fontSize: 22,
     color: colors.cream,
