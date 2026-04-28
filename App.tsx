@@ -1,6 +1,6 @@
 // キブンヤ エントリーポイント(v2: 興味ベースゲート + プロフィールタブ)
 import 'react-native-gesture-handler';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import {
   NavigationContainer,
@@ -162,18 +162,26 @@ function Root() {
     return () => sub.remove();
   }, []);
 
-  // MVP: enabled なアクティビティが1つだけのとき、興味未設定ユーザーは
-  // InterestSelectionScreen を経由せず自動で初期化する。
+  // MVP: enabled なアクティビティが1つだけのとき、interests と enabled の積集合 (visibleIds)
+  // が空のユーザーは InterestSelectionScreen を経由せず自動で初期化する。
+  // 単純な interests.length === 0 だと、過去に4アクティビティ全有効時代に登録した
+  // レガシーユーザー (interests=['sauna','lunch'] 等) が拾えず HomeScreen で
+  // 行き詰まるため、visibleIds で判定する。
   // (v1.1 で enabled が複数になれば自動で従来のゲートが復活する)
+  const enabledIds = useMemo(() => getEnabledActivityIds(), []);
+  const visibleIds = useMemo(
+    () => profile.interests.filter((id) => enabledIds.includes(id)),
+    [profile.interests, enabledIds],
+  );
+
   useEffect(() => {
     if (!currentUser || profileLoading) return;
-    const enabledIds = getEnabledActivityIds();
-    if (enabledIds.length === 1 && profile.interests.length === 0) {
+    if (enabledIds.length === 1 && visibleIds.length === 0) {
       setInterests(enabledIds).catch((e) =>
         console.warn('auto-init interests failed', e),
       );
     }
-  }, [currentUser, profileLoading, profile.interests, setInterests]);
+  }, [currentUser, profileLoading, enabledIds, visibleIds.length, setInterests]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -230,11 +238,12 @@ function Root() {
     );
   }
 
-  // 興味未選択ならゲート (enabled が複数あるときのみ)
-  // enabled が1つの場合は上の useEffect が自動で interests を埋めるため、
-  // ここではローディング表示を出して書き込み完了を待つ。
-  if (profile.interests.length === 0) {
-    if (getEnabledActivityIds().length === 1) {
+  // 表示可能なアクティビティが無いならゲート。enabled が1つの場合は
+  // 上の useEffect が自動で interests を埋めるため、ここではローディング表示を出す。
+  // (interests に無効化済みアクティビティしか入っていないレガシーユーザーも
+  //  visibleIds=[] となり同じ自動初期化フローに乗る)
+  if (visibleIds.length === 0) {
+    if (enabledIds.length === 1) {
       return (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.shu} />
