@@ -32,6 +32,12 @@ export default function NotificationsScreen({ route }: any) {
   const [highlightId, setHighlightId] = useState<string | null>(
     route?.params?.highlightId ?? null,
   );
+  // scrollToIndex フォールバック用の段階リトライカウンタ。
+  // highlightId が変わるたびにリセットする (highlightId と紐付けて管理)。
+  const scrollRetryRef = useRef<{ id: string | null; attempts: number }>({
+    id: null,
+    attempts: 0,
+  });
 
   useEffect(() => {
     const id = route?.params?.highlightId;
@@ -42,6 +48,8 @@ export default function NotificationsScreen({ route }: any) {
     if (!highlightId || notifications.length === 0) return;
     const idx = notifications.findIndex((n) => n.id === highlightId);
     if (idx >= 0) {
+      // 新しいハイライトに切り替わったらリトライカウンタをリセット
+      scrollRetryRef.current = { id: highlightId, attempts: 0 };
       // FlatList の描画完了を待ってからスクロール
       requestAnimationFrame(() => {
         listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
@@ -106,10 +114,29 @@ export default function NotificationsScreen({ route }: any) {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
-            // フォールバック: 概算 offset で再スクロール
-            listRef.current?.scrollToOffset({
-              offset: Math.max(0, index * (averageItemLength || 80)),
-              animated: true,
+            // 通知カードは可変高さ (sender 名・エリア有無で message が 1〜2行に
+            // 折り返す) のため getItemLayout が事前計算できず、averageItemLength
+            // ベースの一発 scrollToOffset では目的カードを通り過ぎる可能性がある。
+            // 段階リトライ (粗→精) で目的位置に収束させる:
+            //   1) 粗いoffsetで近傍まで一気にジャンプ (animated:false で測定誤差を最小化)
+            //   2) requestAnimationFrame で再描画を待ち scrollToIndex を再試行
+            //   3) 失敗したら再度フォールバックが呼ばれ attempts++ で更にリトライ
+            //      (最大3回で収束しない場合は諦める)
+            const MAX_SCROLL_RETRIES = 3;
+            const state = scrollRetryRef.current;
+            if (state.attempts >= MAX_SCROLL_RETRIES) return;
+            state.attempts += 1;
+
+            const offset = Math.max(0, index * (averageItemLength || 80));
+            listRef.current?.scrollToOffset({ offset, animated: false });
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                listRef.current?.scrollToIndex({
+                  index,
+                  animated: true,
+                  viewPosition: 0.3,
+                });
+              }, 50 * state.attempts);
             });
           }}
           renderItem={({ item }) => (
