@@ -179,7 +179,6 @@ export default function HomeScreen({ navigation }: any) {
           <Text style={styles.title}>
             {waiting ? '待ちますかー' : activity.sendCopy}
           </Text>
-          <Text style={styles.caption}>{activity.waitCopy}</Text>
 
           {!waiting && (
             <View style={styles.areaField}>
@@ -337,12 +336,6 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: colors.cream,
     fontWeight: '600',
-  },
-  caption: {
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginBottom: 4,
   },
   areaField: {
     width: '100%',
