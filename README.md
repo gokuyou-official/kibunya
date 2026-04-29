@@ -119,14 +119,64 @@ cp .env.example .env
 ```
 
 対応関係:
-| firebaseConfig キー | `.env` の変数 |
-|---|---|
-| `apiKey` | `EXPO_PUBLIC_FIREBASE_API_KEY` |
-| `authDomain` | `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN` |
-| `projectId` | `EXPO_PUBLIC_FIREBASE_PROJECT_ID` |
-| `storageBucket` | `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET` |
-| `messagingSenderId` | `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` |
-| `appId` | `EXPO_PUBLIC_FIREBASE_APP_ID` |
+| firebaseConfig キー | `.env` の変数 | 必須 |
+|---|---|---|
+| `apiKey` | `EXPO_PUBLIC_FIREBASE_API_KEY` | ✅ |
+| `authDomain` | `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN` | ✅ |
+| `projectId` | `EXPO_PUBLIC_FIREBASE_PROJECT_ID` | ✅ |
+| `storageBucket` | `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET` | ✅ |
+| `messagingSenderId` | `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | ✅ |
+| `appId` | `EXPO_PUBLIC_FIREBASE_APP_ID` | ✅ |
+| `measurementId` | `EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID` | 任意 (Analytics 用) |
+
+> 必須キーが未設定だと `src/config/firebase.ts` が起動時に `console.error` で警告を出す。
+
+#### 4-2. EAS Secrets 登録 (本番ビルド用)
+
+`.env` は **ローカル開発専用** (Expo Go / `npx expo start`)。EAS Build (`eas build ...`) は `.env` を読まないため、本番ビルド向けには **EAS Secrets** に同じ値を別途登録する必要がある。
+
+> EAS Secrets はビルド時に環境変数として `process.env` に注入される。`EXPO_PUBLIC_` プレフィックスがあればクライアントバンドルに含められる。
+
+**登録手順 (1回のみ):**
+```bash
+eas login
+eas init   # 初回のみ。app.json の extra.eas.projectId が自動設定される
+
+# 必須6キー + 任意1キーを登録
+eas secret:create --name EXPO_PUBLIC_FIREBASE_API_KEY            --value "AIza..."           --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN        --value "kibunyapjt.firebaseapp.com" --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_PROJECT_ID         --value "kibunyapjt"        --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET     --value "kibunyapjt.firebasestorage.app" --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --value "726312004432"     --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_APP_ID             --value "1:726312004432:web:db070d6ba4841cd9019a55" --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID     --value "G-WVHCNJJK2H"      --scope project
+```
+
+> ⚠️ 上記コマンドの `--value` には**実値を直接渡す**。シェル履歴に残るのが嫌なら `--value @secret.txt` のようにファイル経由で渡す方法もある。
+
+**登録確認:**
+```bash
+eas secret:list --scope project
+```
+
+**値の更新 (ローテーション時):**
+```bash
+eas secret:delete --name EXPO_PUBLIC_FIREBASE_API_KEY --scope project
+eas secret:create --name EXPO_PUBLIC_FIREBASE_API_KEY --value "新しい値" --scope project
+```
+
+**本番ビルド時に注入されるか確認:**
+```bash
+eas build --platform ios --profile preview --non-interactive
+# ログ冒頭の "Resolved secrets" 行に上記7キーが表示されれば OK
+```
+
+| 環境 | `.env` | EAS Secrets |
+|---|---|---|
+| `npx expo start` (Expo Go / 開発機実行) | ✅ 使う | ✗ 関係なし |
+| `eas build --profile development` | ✗ 関係なし | ✅ 使う |
+| `eas build --profile preview` (TestFlight) | ✗ 関係なし | ✅ 使う |
+| `eas build --profile production` | ✗ 関係なし | ✅ 使う |
 
 ### 5. Firebase Console で手動設定 (CLI 非対応)
 Firebase CLI では認証プロバイダを有効化できないため、以下は Console (https://console.firebase.google.com/project/kibunya-app) で実施:
