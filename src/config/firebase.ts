@@ -1,6 +1,14 @@
 // Firebase 初期化
-// 注意: 実際の設定値は `firebase apps:sdkconfig` で取得後、
-// 環境変数 or Constants.expoConfig.extra に入れて差し替えてください。
+//
+// 設定値の出所:
+//   - ローカル開発 (Expo Go / `npx expo start`): リポジトリ直下の `.env`
+//     ファイルが Expo によって自動ロードされ process.env に展開される。
+//     `EXPO_PUBLIC_` プレフィックスがついたものだけクライアントに渡る。
+//   - EAS ビルド (preview / production): EAS Secrets に登録された値が
+//     ビルド時に process.env に注入される。詳細は README §5「EAS Secrets
+//     登録」を参照。
+//
+// このファイル自体には実値を書かない。.env / EAS Secrets を経由させる。
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeAuth,
@@ -11,18 +19,32 @@ import {
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
 
-// firebase apps:sdkconfig で取得した値をここに入れる
-// 本番では Constants.expoConfig?.extra?.firebase などから読む想定
 const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? 'REPLACE_ME',
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? 'kibunya-app.firebaseapp.com',
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? 'kibunya-app',
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? 'kibunya-app.appspot.com',
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? 'REPLACE_ME',
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? 'REPLACE_ME',
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+  // measurementId は任意 (Google Analytics 用)。RN 環境では未使用でも害なし。
+  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
+
+// 必須キーが空のままだと Firebase 側で 'auth/invalid-api-key' 等の
+// 紛らわしいエラーになるため、明示的にコンソールへ警告を出す。
+if (
+  !firebaseConfig.apiKey ||
+  !firebaseConfig.projectId ||
+  !firebaseConfig.appId
+) {
+  // eslint-disable-next-line no-console
+  console.error(
+    '[firebase] EXPO_PUBLIC_FIREBASE_* 環境変数が未設定です。\n' +
+      '  ローカル開発: リポジトリ直下の .env を確認 (例は .env.example)\n' +
+      '  EAS ビルド  : `eas secret:list` で登録済みか確認',
+  );
+}
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
