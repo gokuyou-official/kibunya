@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 5.0.0"
+    "version": ">= 12.0.0"
   },
   "build": {
     "development": {
@@ -8,11 +8,24 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      }
     },
-    "production": {}
+    "production": {
+      "ios": {
+        "buildConfiguration": "Release"
+      }
+    }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleId": "（Apple IDのメールアドレス）",
+        "ascAppId": "（App Store ConnectのApp ID数字）",
+        "appleTeamId": "（Developer Team ID）"
+      }
+    }
   }
 }

@@ -15,7 +15,7 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kibunya.app",
+      "bundleIdentifier": "com.gokuyouofficial.kibunya",
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "package": "com.kibunya.app",
+      "package": "com.gokuyouofficial.kibunya",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
