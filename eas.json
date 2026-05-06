@@ -22,9 +22,9 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "（Apple IDのメールアドレス）",
-        "ascAppId": "（App Store ConnectのApp ID数字）",
-        "appleTeamId": "（Developer Team ID）"
+        "appleId": "sk19880328@gmail.com",
+        "ascAppId": "6766822899",
+        "appleTeamId": "HR8PFR4Y3W"
       }
     }
   }
