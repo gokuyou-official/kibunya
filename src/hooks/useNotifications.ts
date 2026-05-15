@@ -104,7 +104,7 @@ export function useNotifications(
           isRead: true,
         });
         // 相手にお礼通知
-        await addDoc(collection(db, 'notifications'), {
+        const reactionRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUserId,
           senderName: myName,
           receiverId: senderId,
@@ -119,6 +119,10 @@ export function useNotifications(
             [senderFcmToken],
             'KIBUNYA',
             `${myName}さんが「かー」しました${matchEmoji}`,
+            {
+              notificationIds: [reactionRef.id],
+              type: 'reaction',
+            },
           );
         }
       } catch (e) {

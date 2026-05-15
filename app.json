@@ -15,7 +15,7 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kibunya.app",
+      "bundleIdentifier": "com.gokuyouofficial.kibunya",
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "package": "com.kibunya.app",
+      "package": "com.gokuyouofficial.kibunya",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -32,12 +32,14 @@
       "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
     },
     "plugins": [
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "color": "#E8391F"
+        }
+      ],
       "expo-apple-authentication"
     ],
-    "notification": {
-      "color": "#E8391F"
-    },
     "extra": {
       "eas": {
         "projectId": "REPLACE_AFTER_EAS_INIT"

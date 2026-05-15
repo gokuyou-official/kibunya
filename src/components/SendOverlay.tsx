@@ -59,10 +59,7 @@ export default function SendOverlay({ visible, onClose, activityId }: Props) {
         <Animated.View style={[styles.content, { transform: [{ scale }] }]}>
           <Text style={styles.emoji}>{activity.waitEmoji}</Text>
           <Text style={styles.title}>待ちますかー</Text>
-          <Text style={styles.sub}>
-            気分、置いておきました。{'\n'}
-            興味が合う友達に通知が届きます。
-          </Text>
+          <Text style={styles.sub}>友達に届きました</Text>
           <Pressable onPress={handleClose} style={styles.closeBtn}>
             <Text style={styles.closeText}>とじる</Text>
           </Pressable>
