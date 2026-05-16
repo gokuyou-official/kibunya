@@ -12,14 +12,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFF9EC"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kibunya.app",
+      "bundleIdentifier": "com.gokuyouofficial.kibunya",
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "NSUserNotificationUsageDescription": "友達からの「いきますかー」通知を受け取るために使用します。"
+        "NSUserNotificationUsageDescription": "友達からの「いきますかー」通知を受け取るために使用します。",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -29,7 +32,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFF9EC"
       },
-      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
     },
     "plugins": [
       "expo-notifications",
@@ -40,8 +46,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "REPLACE_AFTER_EAS_INIT"
+        "projectId": "b25f7c97-3594-42a1-bfbd-4cca8196f7a3"
       }
-    }
+    },
+    "owner": "gokuyou-official"
   }
 }
