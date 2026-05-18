@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
 import { useAuth } from '../hooks/useAuth';
+import { firebaseAuthErrorToJa } from '../utils/firebaseError';
 
 export default function OnboardingScreen() {
   const { signInWithApple, signInWithEmail } = useAuth();
@@ -30,7 +31,7 @@ export default function OnboardingScreen() {
     try {
       await signInWithApple();
     } catch (e: any) {
-      Alert.alert('ログイン失敗', e?.message ?? 'もう一度お試しください');
+      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
     } finally {
       setBusy(false);
     }
@@ -46,7 +47,7 @@ export default function OnboardingScreen() {
     try {
       await signInWithEmail(email.trim(), password);
     } catch (e: any) {
-      Alert.alert('ログイン失敗', e?.message ?? 'もう一度お試しください');
+      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
     } finally {
       setBusy(false);
     }
