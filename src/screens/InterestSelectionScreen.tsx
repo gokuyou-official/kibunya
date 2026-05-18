@@ -28,7 +28,9 @@ export default function InterestSelectionScreen({ editMode, onDone }: Props) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setSelected(profile.interests);
+    if (profile.interests.length > 0) {
+      setSelected(profile.interests);
+    }
   }, [profile.interests]);
 
   const toggle = useCallback((id: ActivityId) => {
