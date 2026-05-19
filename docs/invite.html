@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>招待リンク | KIBUNYA</title>
+  <style>
+    :root {
+      --ai: #1A2E55;
+      --yamabuki: #F5C518;
+      --shu: #E8391F;
+      --white: #f9f5ee;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--ai);
+      color: var(--white);
+      font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .emoji {
+      font-size: 84px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--yamabuki);
+      margin-bottom: 8px;
+      letter-spacing: 0.08em;
+    }
+    .sub {
+      font-size: 14px;
+      opacity: 0.7;
+      line-height: 1.7;
+      margin-bottom: 36px;
+      max-width: 320px;
+    }
+    .status {
+      font-size: 13px;
+      opacity: 0.55;
+      margin-bottom: 28px;
+      min-height: 1.2em;
+    }
+    .btn {
+      display: inline-block;
+      background: var(--shu);
+      color: var(--white);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 16px;
+      margin-bottom: 12px;
+      min-width: 240px;
+    }
+    .btn-secondary {
+      background: rgba(255,249,236,0.10);
+      font-weight: 500;
+    }
+    a { color: var(--yamabuki); text-decoration: none; }
+    footer {
+      position: fixed;
+      bottom: 16px;
+      font-size: 11px;
+      opacity: 0.35;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="emoji">🍺</div>
+  <h1>KIBUNYA</h1>
+  <p class="sub">
+    招待リンクを受け取りました。<br>
+    アプリを起動します…
+  </p>
+  <p class="status" id="status">アプリを開いています…</p>
+
+  <a id="appStoreBtn" class="btn" href="https://apps.apple.com/jp/app/id6766822899">
+    App Store で開く
+  </a>
+  <a id="appOpenBtn" class="btn btn-secondary" href="#">
+    アプリをお持ちでない方はこちら
+  </a>
+
+  <footer>© 2026 gokuyou-official</footer>
+
+  <script>
+    (function () {
+      var APP_STORE_URL = 'https://apps.apple.com/jp/app/id6766822899';
+
+      // uid を抽出: パス '/invite/{uid}' を優先、なければクエリ '?uid=xxx'
+      var uid = null;
+      var pathMatch = location.pathname.match(/[/]invite[/]([^/?#]+)/);
+      if (pathMatch && pathMatch[1]) {
+        uid = decodeURIComponent(pathMatch[1]);
+      } else {
+        var params = new URLSearchParams(location.search);
+        var q = params.get('uid');
+        if (q) uid = q;
+      }
+
+      var statusEl = document.getElementById('status');
+      var appOpenBtn = document.getElementById('appOpenBtn');
+      var appStoreBtn = document.getElementById('appStoreBtn');
+
+      if (!uid) {
+        statusEl.textContent = '招待リンクが正しくありません';
+        appOpenBtn.style.display = 'none';
+        return;
+      }
+
+      var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
+      appOpenBtn.setAttribute('href', APP_SCHEME_URL);
+      appStoreBtn.setAttribute('href', APP_STORE_URL);
+
+      // 自動でアプリ起動を試行
+      // iframe を使うのが従来のテクニックだが、iOS では Universal Links 未設定時の
+      // 確実な方法として location.href に直接代入する。
+      try {
+        window.location.href = APP_SCHEME_URL;
+      } catch (e) {
+        // noop
+      }
+
+      // 3秒後にまだフォアグラウンドなら App Store へリダイレクト。
+      // document.hidden が true ならアプリが起動して Safari がバックグラウンド入り
+      // しているとみなしリダイレクトしない。
+      setTimeout(function () {
+        if (document.hidden) {
+          statusEl.textContent = 'アプリを起動しました';
+          return;
+        }
+        statusEl.textContent = 'App Store に移動します…';
+        window.location.href = APP_STORE_URL;
+      }, 3000);
+    })();
+  </script>
+
+</body>
+</html>
