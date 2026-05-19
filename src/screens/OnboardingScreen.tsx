@@ -140,13 +140,13 @@ export default function OnboardingScreen() {
 
           <View style={styles.footer}>
             <Pressable
-              onPress={() => Linking.openURL('https://example.com/terms')}
+              onPress={() => Linking.openURL('https://gokuyou-official.github.io/kibunya/support.html')}
             >
-              <Text style={styles.footerLink}>利用規約</Text>
+              <Text style={styles.footerLink}>サポート</Text>
             </Pressable>
             <Text style={styles.footerSep}>・</Text>
             <Pressable
-              onPress={() => Linking.openURL('https://example.com/privacy')}
+              onPress={() => Linking.openURL('https://gokuyou-official.github.io/kibunya/privacy-policy.html')}
             >
               <Text style={styles.footerLink}>プライバシーポリシー</Text>
             </Pressable>
