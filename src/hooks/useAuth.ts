@@ -9,7 +9,7 @@ import {
   OAuthProvider,
   User,
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { auth, db } from '../config/firebase';
 
@@ -26,22 +26,42 @@ export function useAuth() {
   }, []);
 
   // ユーザードキュメントを作成/更新
+  //
+  // ⚠️ 重要: Firestore の `{ merge: true }` は「書いたフィールドは上書き、
+  // 書かなかったフィールドのみ保持」という意味。空値で明示的に書くと
+  // 既存値も空値で上書きされる。
+  //
+  // ログインのたびに name='ゲスト' / area='' / bio='' / interests=[] と
+  // 書き込むと、ユーザーが編集済みの値が初期化されてしまう (実際これが
+  // 起きていた)。
+  //
+  // 対策: getDoc で既存性を確認し、
+  //  - 新規ユーザー: 全フィールド初期値で create
+  //  - 既存ユーザー: lastSeen のみ更新 (ユーザー編集値は触らない)
   const upsertUserDoc = useCallback(async (user: User, name?: string) => {
     try {
-      await setDoc(
-        doc(db, 'users', user.uid),
-        {
+      const ref = doc(db, 'users', user.uid);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        // 新規ユーザー: 全フィールド初期化して保存
+        await setDoc(ref, {
           name: name ?? user.displayName ?? 'ゲスト',
           email: user.email ?? '',
-          lastSeen: serverTimestamp(),
-          createdAt: serverTimestamp(),
-          // 新規作成時のみ空値を入れる(既存値は merge で保持)
           area: '',
           bio: '',
           interests: [],
-        },
-        { merge: true },
-      );
+          createdAt: serverTimestamp(),
+          lastSeen: serverTimestamp(),
+        });
+      } else {
+        // 既存ユーザー: lastSeen のみ更新。ユーザー編集済の
+        // name / area / bio / interests は絶対に触らない。
+        await setDoc(
+          ref,
+          { lastSeen: serverTimestamp() },
+          { merge: true },
+        );
+      }
     } catch (e) {
       console.warn('upsertUserDoc error', e);
     }
