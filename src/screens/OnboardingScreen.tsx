@@ -69,7 +69,7 @@ export default function OnboardingScreen() {
 
           <Text style={styles.kicker}>KIBUNYA</Text>
           <Text style={styles.headline}>
-            誘ってないけど知っている
+            今日は、こんな気分。
           </Text>
 
           <View style={styles.actions}>

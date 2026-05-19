@@ -59,7 +59,7 @@ export default function InterestSelectionScreen({ editMode, onDone }: Props) {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.kicker}>KIBUNYA</Text>
-        <Text style={styles.title}>気分、なに置いとく？</Text>
+        <Text style={styles.title}>いまの気分は？</Text>
         <Text style={styles.sub}>
           通知を受け取りたいアクティビティを選んでね。{'\n'}後からいつでも変えられます。
         </Text>
