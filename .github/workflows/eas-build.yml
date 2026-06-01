@@ -44,5 +44,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and Submit iOS production
-        run: eas build --platform ios --profile production --non-interactive --auto-submit --clear-cache
+      - name: Build iOS production (no auto-submit)
+        # NOTE: --auto-submit を意図的に外し、ビルドと提出を分離する。
+        # ビルドステップの実時間 (本物のフルビルドなら数十分〜数時間) で
+        # 「fingerprint reuse による即時完了」を検知できるようにする。
+        run: eas build --platform ios --profile production --non-interactive --clear-cache
+
+      - name: Submit latest iOS build to App Store Connect
+        # 直前のステップで生成された最新ビルドを EAS から取得して submit
+        run: eas submit --platform ios --latest --non-interactive
