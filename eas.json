@@ -17,6 +17,9 @@
       "ios": {
         "buildConfiguration": "Release",
         "image": "latest"
+      },
+      "cache": {
+        "disabled": true
       }
     }
   },
