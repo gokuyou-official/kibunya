@@ -46,6 +46,9 @@
       ],
       "expo-apple-authentication"
     ],
+    "updates": {
+      "fingerprintExperimentalEnabled": false
+    },
     "extra": {
       "eas": {
         "projectId": "b25f7c97-3594-42a1-bfbd-4cca8196f7a3"

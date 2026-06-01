@@ -29,10 +29,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node
+        # NOTE: cache: npm を意図的に指定しない。node_modules を毎回新規生成し、
+        # キャッシュ起因の stale build を防ぐ (EAS Build cache の補強)。
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Setup EAS CLI
         uses: expo/expo-github-action@v8
