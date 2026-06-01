@@ -9,7 +9,17 @@
 //     登録」を参照。
 //
 // このファイル自体には実値を書かない。.env / EAS Secrets を経由させる。
-import { initializeApp, getApps, getApp } from 'firebase/app';
+//
+// ⚠️ 重要: 設定値が欠落していると Firebase Web SDK の initializeApp が
+// 同期 throw する。その例外を module-level で受けないと App.tsx の import
+// チェーンごと evaluate に失敗し、React がマウントできずホワイトアウト
+// する。そのため try/catch で握り、初期化失敗を initError として export し、
+// 上位 (App.tsx Root) で可視エラー画面に切り替えられるようにする。
+//
+// 利用側の契約: App.tsx Root で initError をチェックし、null でなければ
+// 早期 return でエラー画面を出すこと。これが守られている限り、後段で
+// app/auth/db が non-null として扱われても実害は無い。
+import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import {
   initializeAuth,
   getAuth,
@@ -17,7 +27,7 @@ import {
   getReactNativePersistence,
   type Auth,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
@@ -31,33 +41,48 @@ const firebaseConfig = {
   measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-// 必須キーが空のままだと Firebase 側で 'auth/invalid-api-key' 等の
-// 紛らわしいエラーになるため、明示的にコンソールへ警告を出す。
-if (
-  !firebaseConfig.apiKey ||
-  !firebaseConfig.projectId ||
-  !firebaseConfig.appId
-) {
-  // eslint-disable-next-line no-console
-  console.error(
-    '[firebase] EXPO_PUBLIC_FIREBASE_* 環境変数が未設定です。\n' +
-      '  ローカル開発: リポジトリ直下の .env を確認 (例は .env.example)\n' +
-      '  EAS ビルド  : `eas secret:list` で登録済みか確認',
+const missingKeys: string[] = [];
+if (!firebaseConfig.apiKey) missingKeys.push('EXPO_PUBLIC_FIREBASE_API_KEY');
+if (!firebaseConfig.projectId) missingKeys.push('EXPO_PUBLIC_FIREBASE_PROJECT_ID');
+if (!firebaseConfig.appId) missingKeys.push('EXPO_PUBLIC_FIREBASE_APP_ID');
+
+let _app: FirebaseApp | null = null;
+let _auth: Auth | null = null;
+let _db: Firestore | null = null;
+let _initError: Error | null = null;
+
+if (missingKeys.length > 0) {
+  // 早期に空キーを検知した場合は initializeApp を呼ばない (空 apiKey で
+  // 呼ぶと Firebase が同期 throw するため、こちらで明示エラーに変える)
+  _initError = new Error(
+    `Firebase 設定の必須キーが未設定です: ${missingKeys.join(', ')}\n` +
+      `EAS ビルド: EAS Secrets を確認 (\`eas secret:list --scope project\`)\n` +
+      `ローカル開発: .env を確認 (例は .env.example)`,
   );
+  // eslint-disable-next-line no-console
+  console.error('[firebase]', _initError.message);
+} else {
+  try {
+    _app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+    try {
+      _auth = initializeAuth(_app, {
+        persistence: getReactNativePersistence(AsyncStorage),
+      });
+    } catch {
+      _auth = getAuth(_app);
+    }
+    _db = getFirestore(_app);
+  } catch (e: any) {
+    _initError = e instanceof Error ? e : new Error(String(e));
+    // eslint-disable-next-line no-console
+    console.error('[firebase] initialization failed:', _initError.message);
+  }
 }
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// React Native では AsyncStorage で永続化
-let auth: Auth;
-try {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
-} catch {
-  auth = getAuth(app);
-}
-
-const db = getFirestore(app);
-
-export { app, auth, db };
+// 利用側の契約 (App.tsx Root で initError チェックが行われている前提) のため、
+// app/auth/db は non-null 型で export する。万一契約が破られた場合は runtime
+// で null 参照例外が発生する。
+export const app = _app as FirebaseApp;
+export const auth = _auth as Auth;
+export const db = _db as Firestore;
+export const initError = _initError;

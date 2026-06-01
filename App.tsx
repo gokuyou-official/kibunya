@@ -15,7 +15,7 @@ import * as Notifications from 'expo-notifications';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 import { colors } from './src/config/colors';
-import { db } from './src/config/firebase';
+import { db, initError as firebaseInitError } from './src/config/firebase';
 import { useAuth } from './src/hooks/useAuth';
 import { useNotifications } from './src/hooks/useNotifications';
 import { useProfile } from './src/hooks/useProfile';
@@ -354,6 +354,20 @@ function Root() {
 }
 
 export default function App() {
+  // Firebase 初期化エラーがあれば、Root より前にエラー画面を出す。
+  // (Root の中で hooks (useAuth etc.) が auth/db を触る前に止める)
+  if (firebaseInitError) {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <View style={styles.errorScreen}>
+          <Text style={styles.errorEmoji}>⚠️</Text>
+          <Text style={styles.errorTitle}>初期化に失敗しました</Text>
+          <Text style={styles.errorSub}>{String(firebaseInitError.message)}</Text>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
