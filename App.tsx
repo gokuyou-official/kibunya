@@ -353,6 +353,55 @@ function Root() {
   );
 }
 
+// React レンダリング中の例外を必ず可視化するための Error Boundary。
+// 既存の styles に依存せず inline スタイルで自己完結させ、colors の
+// import が壊れていてもエラー画面が表示できるようにする。
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: any) {
+    // eslint-disable-next-line no-console
+    console.error('[AppErrorBoundary]', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: '#1A2E55',
+            paddingHorizontal: 24,
+            paddingTop: 80,
+            paddingBottom: 40,
+          }}
+        >
+          <Text style={{ color: '#FFF9EC', fontSize: 22, fontWeight: '700', marginBottom: 8 }}>
+            ⚠️ アプリでエラー
+          </Text>
+          <Text style={{ color: '#F5C518', fontSize: 14, marginBottom: 16 }}>
+            起動中に問題が発生しました
+          </Text>
+          <Text style={{ color: '#FFF9EC', fontSize: 14, marginBottom: 12 }}>
+            {String(this.state.error.message ?? this.state.error)}
+          </Text>
+          <Text style={{ color: 'rgba(255,249,236,0.55)', fontSize: 10, fontFamily: 'Courier' }}>
+            {String(this.state.error.stack ?? '').slice(0, 1500)}
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 export default function App() {
   // Firebase 初期化エラーがあれば、Root より前にエラー画面を出す。
   // (Root の中で hooks (useAuth etc.) が auth/db を触る前に止める)
@@ -360,19 +409,31 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
-        <View style={styles.errorScreen}>
-          <Text style={styles.errorEmoji}>⚠️</Text>
-          <Text style={styles.errorTitle}>初期化に失敗しました</Text>
-          <Text style={styles.errorSub}>{String(firebaseInitError.message)}</Text>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: '#1A2E55',
+            paddingHorizontal: 24,
+            paddingTop: 80,
+          }}
+        >
+          <Text style={{ color: '#FFF9EC', fontSize: 22, fontWeight: '700', marginBottom: 8 }}>
+            ⚠️ 初期化に失敗しました
+          </Text>
+          <Text style={{ color: '#FFF9EC', fontSize: 14 }}>
+            {String(firebaseInitError.message)}
+          </Text>
         </View>
       </SafeAreaProvider>
     );
   }
   return (
-    <SafeAreaProvider>
-      <StatusBar style="light" />
-      <Root />
-    </SafeAreaProvider>
+    <AppErrorBoundary>
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <Root />
+      </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }
 
