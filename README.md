@@ -298,3 +298,4 @@ notifications/{notificationId}
 - グループ機能(家族グループ等)
 - 位置情報ベースの近距離通知
 
+
