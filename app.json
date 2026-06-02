@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.gokuyouofficial.kibunya",
-      "buildNumber": "5",
+      "buildNumber": "10",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSUserNotificationUsageDescription": "友達からの「いきますかー」通知を受け取るために使用します。",
