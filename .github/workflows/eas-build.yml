@@ -51,5 +51,32 @@ jobs:
         run: eas build --platform ios --profile production --non-interactive --clear-cache
 
       - name: Submit latest iOS build to App Store Connect
-        # 直前のステップで生成された最新ビルドを EAS から取得して submit
-        run: eas submit --platform ios --latest --non-interactive
+        # 直前のステップで生成された最新ビルドを EAS から取得して submit。
+        # eas submit はネットワーク/Apple API の一過性エラーで失敗することが多いため
+        # 最大3回リトライ。各試行は 25 分でタイムアウト (全体予算 ~90 分以内)。
+        # バックオフは 60s → 180s (Apple API の rate limit を意識して長め)。
+        # NOTE: 'already submitted' は恒久エラーなのでリトライしても通らない。
+        # この場合は app.json の buildNumber を bump して再 push する必要がある。
+        timeout-minutes: 90
+        run: |
+          set -u
+          attempts=3
+          backoffs=(60 180)
+          for i in $(seq 1 $attempts); do
+            echo "::group::Submit attempt $i/$attempts"
+            if timeout 25m eas submit --platform ios --latest --non-interactive; then
+              echo "::endgroup::"
+              echo "Submit succeeded on attempt $i"
+              exit 0
+            fi
+            rc=$?
+            echo "::endgroup::"
+            echo "::warning::Submit attempt $i failed (exit code $rc)"
+            if [ $i -lt $attempts ]; then
+              sleep_sec=${backoffs[$((i-1))]}
+              echo "Sleeping ${sleep_sec}s before next attempt..."
+              sleep $sleep_sec
+            fi
+          done
+          echo "::error::All $attempts submit attempts failed"
+          exit 1
