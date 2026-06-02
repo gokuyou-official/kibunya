@@ -19,8 +19,9 @@ import { useAuth } from '../hooks/useAuth';
 import { firebaseAuthErrorToJa } from '../utils/firebaseError';
 
 export default function OnboardingScreen() {
-  const { signInWithApple, signInWithEmail } = useAuth();
+  const { signInWithApple, signInWithEmail, signUpWithEmail } = useAuth();
   const [showEmail, setShowEmail] = useState(false);
+  const [emailMode, setEmailMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,9 +53,16 @@ export default function OnboardingScreen() {
     }
     setBusy(true);
     try {
-      await signInWithEmail(email.trim(), password);
+      if (emailMode === 'signup') {
+        await signUpWithEmail(email.trim(), password);
+      } else {
+        await signInWithEmail(email.trim(), password);
+      }
     } catch (e: any) {
-      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
+      Alert.alert(
+        emailMode === 'signup' ? '登録失敗' : 'ログイン失敗',
+        firebaseAuthErrorToJa(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -105,10 +113,44 @@ export default function OnboardingScreen() {
                   pressed && { opacity: 0.85 },
                 ]}
               >
-                <Text style={styles.emailText}>メールアドレスでログイン</Text>
+                <Text style={styles.emailText}>メールアドレスでログイン / 新規登録</Text>
               </Pressable>
             ) : (
               <View style={styles.emailForm}>
+                <View style={styles.modeToggle}>
+                  <Pressable
+                    onPress={() => setEmailMode('login')}
+                    style={[
+                      styles.modeTab,
+                      emailMode === 'login' && styles.modeTabActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeTabText,
+                        emailMode === 'login' && styles.modeTabTextActive,
+                      ]}
+                    >
+                      ログイン
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setEmailMode('signup')}
+                    style={[
+                      styles.modeTab,
+                      emailMode === 'signup' && styles.modeTabActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.modeTabText,
+                        emailMode === 'signup' && styles.modeTabTextActive,
+                      ]}
+                    >
+                      新規登録
+                    </Text>
+                  </Pressable>
+                </View>
                 <TextInput
                   value={email}
                   onChangeText={setEmail}
@@ -138,7 +180,9 @@ export default function OnboardingScreen() {
                   {busy ? (
                     <ActivityIndicator color={colors.cream} />
                   ) : (
-                    <Text style={styles.submitText}>はじめる</Text>
+                    <Text style={styles.submitText}>
+                      {emailMode === 'signup' ? '新規登録' : 'ログイン'}
+                    </Text>
                   )}
                 </Pressable>
               </View>
@@ -236,6 +280,33 @@ const styles = StyleSheet.create({
   },
   emailForm: {
     gap: 10,
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 4,
+  },
+  modeTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeTabActive: {
+    backgroundColor: colors.shu,
+  },
+  modeTabText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modeTabTextActive: {
+    color: colors.cream,
   },
   input: {
     backgroundColor: colors.cardBg,

@@ -203,7 +203,12 @@ export default function HomeScreen({ navigation }: any) {
             </View>
           )}
 
-          <Animated.View style={{ transform: [{ scale }], width: '100%', maxWidth: 320 }}>
+          <Animated.View
+            style={[
+              { transform: [{ scale }], width: '100%', maxWidth: 320 },
+              waiting && { marginTop: 16 },
+            ]}
+          >
             {waiting ? (
               <Pressable
                 onPress={cancelWaiting}
@@ -346,7 +351,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   titleWaiting: {
-    marginBottom: 16,
+    marginBottom: 32,
   },
   areaField: {
     width: '100%',

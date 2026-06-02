@@ -127,25 +127,22 @@ export function useAuth() {
     }
   }, [upsertUserDoc]);
 
-  // メール+パスワード ログイン/新規
+  // メール+パスワード ログイン (アカウントが無ければ失敗)
   const signInWithEmail = useCallback(
     async (email: string, password: string) => {
-      try {
-        const result = await signInWithEmailAndPassword(auth, email, password);
-        await upsertUserDoc(result.user);
-        return result.user;
-      } catch (e: any) {
-        // 存在しない場合は新規作成にフォールバック
-        if (
-          e?.code === 'auth/user-not-found' ||
-          e?.code === 'auth/invalid-credential'
-        ) {
-          const result = await createUserWithEmailAndPassword(auth, email, password);
-          await upsertUserDoc(result.user);
-          return result.user;
-        }
-        throw e;
-      }
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      await upsertUserDoc(result.user);
+      return result.user;
+    },
+    [upsertUserDoc],
+  );
+
+  // メール+パスワード 新規登録
+  const signUpWithEmail = useCallback(
+    async (email: string, password: string) => {
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      await upsertUserDoc(result.user);
+      return result.user;
     },
     [upsertUserDoc],
   );
@@ -164,6 +161,7 @@ export function useAuth() {
     loading,
     signInWithApple,
     signInWithEmail,
+    signUpWithEmail,
     signOut,
   };
 }
