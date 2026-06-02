@@ -94,10 +94,34 @@ export function useAuth() {
             .filter(Boolean)
             .join(' ')
         : undefined;
-      await upsertUserDoc(result.user, fullName);
+      // ⚠️ ここで await すると Firestore (upsertUserDoc) のエラーが
+      // ログイン失敗として表面化し、Face ID 成功直後に一瞬「ログイン失敗」
+      // が点滅する。Firebase 認証自体は成功しているので非同期で投げ捨てる。
+      upsertUserDoc(result.user, fullName).catch((err) =>
+        console.warn('upsertUserDoc (background) failed', err),
+      );
       return result.user;
     } catch (e: any) {
-      if (e?.code === 'ERR_REQUEST_CANCELED') return null;
+      const code = e?.code;
+      const msg = String(e?.message ?? '').toLowerCase();
+      // Cancel 系: Alert を出さないため null を返す。
+      // 公式は ERR_REQUEST_CANCELED のみだが端末・OS 差で別コードや
+      // message-only でも来るため広めに拾う (誤検知より誤Alertの方が悪い)。
+      if (
+        code === 'ERR_REQUEST_CANCELED' ||
+        code === 'ERR_CANCELED' ||
+        code === 'ERR_REQUEST_NOT_HANDLED' ||
+        msg.includes('cancel')
+      ) {
+        return null;
+      }
+      // Firebase auth が既に通っている場合は後段エラーを無視。
+      // 「ログイン成功 → 後段で何か失敗 → Alert フラッシュ → 画面遷移」
+      // の不快な点滅を防ぐ。
+      if (auth.currentUser) {
+        console.warn('signInWithApple: post-auth error ignored', e);
+        return auth.currentUser;
+      }
       console.error('signInWithApple error', e);
       throw e;
     }

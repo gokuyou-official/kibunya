@@ -185,7 +185,7 @@ export default function HomeScreen({ navigation }: any) {
             </Text>
           </View>
 
-          <Text style={styles.title}>
+          <Text style={[styles.title, waiting && styles.titleWaiting]}>
             {waiting ? '待ちますかー' : activity.sendCopy}
           </Text>
 
@@ -215,7 +215,6 @@ export default function HomeScreen({ navigation }: any) {
                 <Text style={styles.ctaWaitingText}>
                   待ちますかー {activity.waitEmoji}
                 </Text>
-                <Text style={styles.ctaWaitingSub}>タップでキャンセル</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -346,6 +345,9 @@ const styles = StyleSheet.create({
     color: colors.cream,
     fontWeight: '600',
   },
+  titleWaiting: {
+    marginBottom: 16,
+  },
   areaField: {
     width: '100%',
     maxWidth: 320,
@@ -389,11 +391,6 @@ const styles = StyleSheet.create({
     color: colors.ai,
     fontSize: 18,
     fontWeight: '700',
-  },
-  ctaWaitingSub: {
-    color: 'rgba(26,46,85,0.65)',
-    fontSize: 11,
-    marginTop: 2,
   },
   hint: {
     fontSize: 11,

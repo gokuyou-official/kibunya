@@ -29,11 +29,18 @@ export default function OnboardingScreen() {
     if (busy) return;
     setBusy(true);
     try {
-      await signInWithApple();
+      const user = await signInWithApple();
+      if (!user) {
+        // キャンセル: spinner を戻す
+        setBusy(false);
+        return;
+      }
+      // 成功: busy=true のまま維持。Root 側の auth state 変化で画面遷移するため
+      // この画面は unmount される。ここで setBusy(false) すると
+      // 「Appleでログイン」ラベルが一瞬戻ってチラつく原因になる。
     } catch (e: any) {
-      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
-    } finally {
       setBusy(false);
+      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
     }
   };
 
