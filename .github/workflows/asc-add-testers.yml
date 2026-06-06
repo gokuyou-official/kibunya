@@ -1,0 +1,88 @@
+name: ASC Add Internal Testers
+
+# App Store Connect の内部 Beta Group "キブンヤ テスト" に、
+# 除外メール (デフォルト sk19880328@gmail.com) 以外のチームメンバー全員を追加。
+#
+# 必須 secrets:
+#   - ASC_ISSUER_ID
+#   - ASC_KEY_ID
+#   - ASC_P8_KEY  (PEM, BEGIN〜END 含む)
+#
+# 安全策: dry_run はデフォルト true。実適用は明示的に false を選んだときのみ。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (計画のみ表示、変更しない)。false にすると実際に追加'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      group_name:
+        description: '対象の内部 Beta Group 名'
+        required: true
+        default: 'キブンヤ テスト'
+        type: string
+      exclude_emails:
+        description: '除外するメール (カンマ区切り)'
+        required: true
+        default: 'sk19880328@gmail.com'
+        type: string
+
+jobs:
+  add-testers:
+    name: Add team members to internal beta group
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run add-internal-testers script
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          ASC_BUNDLE_ID: 'com.gokuyouofficial.kibunya'
+          DRY_RUN: ${{ inputs.dry_run }}
+          GROUP_NAME: ${{ inputs.group_name }}
+          EXCLUDE_EMAILS: ${{ inputs.exclude_emails }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Add Internal Testers"
+            echo ""
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo "- group_name: \`${GROUP_NAME}\`"
+            echo "- exclude_emails: \`${EXCLUDE_EMAILS}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-add-internal-testers.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
