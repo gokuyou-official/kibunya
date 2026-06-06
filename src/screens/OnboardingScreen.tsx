@@ -21,7 +21,14 @@ import { formatAuthErrorAlert } from '../utils/firebaseError';
 export default function OnboardingScreen() {
   const { signInWithApple, signInWithEmail, signUpWithEmail } = useAuth();
   const [showEmail, setShowEmail] = useState(false);
-  const [emailMode, setEmailMode] = useState<'login' | 'signup'>('login');
+  // デフォルトは 'signup'。理由:
+  //   新規ユーザーが「メールアドレスでログイン / 新規登録」ボタンを押した直後
+  //   にデフォルトが 'login' だと、何も知らずにメール+パスワードを入れて
+  //   submit → signInWithEmailAndPassword (signUp ではない) → auth/user-not-found
+  //   で失敗する。新規ユーザーはタブの切替に気付かず「登録できない」と判断する。
+  //   既存ユーザーは sign-out した稀ケースのみこの画面に来るため、その時だけ
+  //   「ログイン」タブに自分で切り替えてもらう方が全体のフリクションが少ない。
+  const [emailMode, setEmailMode] = useState<'login' | 'signup'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

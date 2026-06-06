@@ -11,7 +11,31 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import { sha256 } from 'js-sha256';
 import { auth, db } from '../config/firebase';
+
+// Apple Sign-In 用の nonce ヘルパ。
+//
+// Sign in with Apple + Firebase Auth の正しい連携:
+//   1. クライアントでランダム raw nonce を生成
+//   2. raw を SHA-256 で hash し、Apple へ `nonce` として渡す
+//   3. Apple は identityToken の nonce claim に hash を埋め込んで返す
+//   4. Firebase へ raw nonce を `rawNonce` として渡す
+//      → Firebase が rawNonce を SHA-256 して identityToken の nonce と
+//        一致するか検証する
+//
+// nonce を渡さずに rawNonce: undefined だけにすると、Apple が自動生成した
+// nonce hash を identityToken に含めた場合に Firebase 側で検証失敗
+// (特に新規アカウント作成時に厳しい) を引き起こす可能性がある。
+function generateRawNonce(length = 32): string {
+  const chars =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
 
 // エラーオブジェクトから安全に構造化情報を抜く。
 // TestFlight ではログが見えないので、最低限の構造を console に流して
@@ -86,11 +110,16 @@ export function useAuth() {
       if (!available) {
         throw new Error('この端末ではAppleサインインが使えません');
       }
+      // Apple へは hash 済 nonce、Firebase へは raw nonce を渡す。
+      // これが Firebase 公式推奨フロー (新規アカウント作成時の nonce 検証失敗を防ぐ)。
+      const rawNonce = generateRawNonce();
+      const hashedNonce = sha256(rawNonce);
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+        nonce: hashedNonce,
       });
       if (!credential.identityToken) {
         throw new Error('Appleからトークンが取得できませんでした');
@@ -98,7 +127,7 @@ export function useAuth() {
       const provider = new OAuthProvider('apple.com');
       const fbCred = provider.credential({
         idToken: credential.identityToken,
-        rawNonce: undefined,
+        rawNonce,
       });
       const result = await signInWithCredential(auth, fbCred);
       const fullName = credential.fullName
