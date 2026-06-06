@@ -1,7 +1,8 @@
 // App Store Connect API v1 — TestFlight tester / build 一覧表示スクリプト
 //
 // 実行方法:
-//   node --env-file=.env scripts/asc-list.mjs
+//   ローカル: node --env-file=.env scripts/asc-list.mjs
+//   CI:       node scripts/asc-list.mjs (env 変数は workflow から注入)
 //
 // 認証: ES256 JWT (ASC API 仕様)
 //   - header.alg = ES256
@@ -11,6 +12,10 @@
 //   - payload.exp = iat + 20 分 (上限)
 //
 // 必要 npm パッケージ: jsonwebtoken
+//
+// 秘密鍵の取得元 (どちらか一方を設定):
+//   1) ASC_P8_KEY      — P8 本文を直接環境変数で渡す (CI 推奨)
+//   2) ASC_P8_KEY_PATH — ローカルファイルへのパス (ローカル開発用)
 import fs from 'node:fs';
 import path from 'node:path';
 import jwt from 'jsonwebtoken';
@@ -18,6 +23,7 @@ import jwt from 'jsonwebtoken';
 const {
   ASC_ISSUER_ID,
   ASC_KEY_ID,
+  ASC_P8_KEY,
   ASC_P8_KEY_PATH,
   ASC_APP_ID,
   ASC_BUNDLE_ID,
@@ -25,21 +31,30 @@ const {
 
 function assertEnv(name, value) {
   if (!value) {
-    console.error(`[error] 環境変数 ${name} が未設定です (.env を確認)`);
+    console.error(`[error] 環境変数 ${name} が未設定です (.env または workflow secrets を確認)`);
     process.exit(1);
   }
 }
 assertEnv('ASC_ISSUER_ID', ASC_ISSUER_ID);
 assertEnv('ASC_KEY_ID', ASC_KEY_ID);
-assertEnv('ASC_P8_KEY_PATH', ASC_P8_KEY_PATH);
 assertEnv('ASC_APP_ID', ASC_APP_ID);
 
-const keyPath = path.resolve(ASC_P8_KEY_PATH);
-if (!fs.existsSync(keyPath)) {
-  console.error(`[error] P8 キーが見つかりません: ${keyPath}`);
+let privateKey;
+if (ASC_P8_KEY && ASC_P8_KEY.includes('BEGIN PRIVATE KEY')) {
+  // CI: 環境変数 ASC_P8_KEY に P8 本文 (PEM) が入っている
+  privateKey = ASC_P8_KEY;
+} else if (ASC_P8_KEY_PATH) {
+  // ローカル: ファイルから読む
+  const keyPath = path.resolve(ASC_P8_KEY_PATH);
+  if (!fs.existsSync(keyPath)) {
+    console.error(`[error] P8 キーが見つかりません: ${keyPath}`);
+    process.exit(1);
+  }
+  privateKey = fs.readFileSync(keyPath, 'utf8');
+} else {
+  console.error('[error] ASC_P8_KEY か ASC_P8_KEY_PATH のいずれかを設定してください');
   process.exit(1);
 }
-const privateKey = fs.readFileSync(keyPath, 'utf8');
 
 function generateToken() {
   const now = Math.floor(Date.now() / 1000);
