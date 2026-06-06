@@ -60,9 +60,12 @@
       margin-bottom: 12px;
       min-width: 240px;
     }
-    .btn-secondary {
-      background: rgba(255,249,236,0.10);
-      font-weight: 500;
+    .note {
+      font-size: 12px;
+      opacity: 0.5;
+      max-width: 320px;
+      line-height: 1.6;
+      margin-top: 8px;
     }
     a { color: var(--yamabuki); text-decoration: none; }
     footer {
@@ -79,23 +82,23 @@
   <h1>KIBUNYA</h1>
   <p class="sub">
     招待リンクを受け取りました。<br>
-    アプリを起動します…
+    下のボタンをタップしてアプリを開いてください。
   </p>
-  <p class="status" id="status">アプリを開いています…</p>
+  <p class="status" id="status">&nbsp;</p>
 
-  <a id="appStoreBtn" class="btn" href="https://apps.apple.com/jp/app/id6766822899">
-    App Store で開く
+  <a id="appOpenBtn" class="btn" href="#">
+    アプリを開く
   </a>
-  <a id="appOpenBtn" class="btn btn-secondary" href="#">
-    アプリをお持ちでない方はこちら
-  </a>
+
+  <p class="note" id="note">
+    アプリがインストールされている端末で開いてください。<br>
+    (現在 App Store では未公開。テスター招待を受けた方は TestFlight からインストール済のアプリで開けます)
+  </p>
 
   <footer>© 2026 gokuyou-official</footer>
 
   <script>
     (function () {
-      var APP_STORE_URL = 'https://apps.apple.com/jp/app/id6766822899';
-
       // uid を抽出: パス '/invite/{uid}' を優先、なければクエリ '?uid=xxx'
       var uid = null;
       var pathMatch = location.pathname.match(/[/]invite[/]([^/?#]+)/);
@@ -109,7 +112,6 @@
 
       var statusEl = document.getElementById('status');
       var appOpenBtn = document.getElementById('appOpenBtn');
-      var appStoreBtn = document.getElementById('appStoreBtn');
 
       if (!uid) {
         statusEl.textContent = '招待リンクが正しくありません';
@@ -119,28 +121,8 @@
 
       var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
       appOpenBtn.setAttribute('href', APP_SCHEME_URL);
-      appStoreBtn.setAttribute('href', APP_STORE_URL);
-
-      // 自動でアプリ起動を試行
-      // iframe を使うのが従来のテクニックだが、iOS では Universal Links 未設定時の
-      // 確実な方法として location.href に直接代入する。
-      try {
-        window.location.href = APP_SCHEME_URL;
-      } catch (e) {
-        // noop
-      }
-
-      // 3秒後にまだフォアグラウンドなら App Store へリダイレクト。
-      // document.hidden が true ならアプリが起動して Safari がバックグラウンド入り
-      // しているとみなしリダイレクトしない。
-      setTimeout(function () {
-        if (document.hidden) {
-          statusEl.textContent = 'アプリを起動しました';
-          return;
-        }
-        statusEl.textContent = 'App Store に移動します…';
-        window.location.href = APP_STORE_URL;
-      }, 3000);
+      // 自動リダイレクトは行わない (App Store 未公開のため誤遷移防止)。
+      // ユーザーがボタンをタップしたら kibunya:// が発火する。
     })();
   </script>
 
