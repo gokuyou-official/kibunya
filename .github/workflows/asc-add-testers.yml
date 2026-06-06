@@ -20,8 +20,13 @@ on:
         options:
           - 'true'
           - 'false'
+      group_id:
+        description: '対象 Beta Group の ID (空なら group_name で検索。指定があれば最優先)'
+        required: false
+        default: '2bf5d6c1-f162-4b7a-ae30-26c69d6635bc'
+        type: string
       group_name:
-        description: '対象の内部 Beta Group 名'
+        description: '対象の内部 Beta Group 名 (group_id が空のときのみ使用)'
         required: true
         default: 'キブンヤ テスト'
         type: string
@@ -71,6 +76,7 @@ jobs:
           ASC_APP_ID: '6766822899'
           ASC_BUNDLE_ID: 'com.gokuyouofficial.kibunya'
           DRY_RUN: ${{ inputs.dry_run }}
+          GROUP_ID: ${{ inputs.group_id }}
           GROUP_NAME: ${{ inputs.group_name }}
           EXCLUDE_EMAILS: ${{ inputs.exclude_emails }}
         run: |
@@ -79,6 +85,7 @@ jobs:
             echo "## ASC Add Internal Testers"
             echo ""
             echo "- dry_run: \`${DRY_RUN}\`"
+            echo "- group_id: \`${GROUP_ID:-(none, name lookup)}\`"
             echo "- group_name: \`${GROUP_NAME}\`"
             echo "- exclude_emails: \`${EXCLUDE_EMAILS}\`"
             echo ""

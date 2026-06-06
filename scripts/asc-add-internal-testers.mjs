@@ -8,13 +8,16 @@
 //   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY (or ASC_P8_KEY_PATH)
 //   ASC_APP_ID
 // 任意 env:
-//   GROUP_NAME       (default: "キブンヤ テスト")
+//   GROUP_ID         グループ ID を直接指定 (最優先、名前マッチの揺れを完全回避)
+//   GROUP_NAME       (default: "キブンヤ テスト") GROUP_ID 未指定時のみ使用
 //   EXCLUDE_EMAILS   (default: "sk19880328@gmail.com"  カンマ区切り)
 //   DRY_RUN          (default: "true")
 //
 // 流れ:
 //   1. /v1/users で ASC チームメンバー全員を取得
-//   2. /v1/betaGroups?filter[app]=<id> から GROUP_NAME 一致 & isInternalGroup=true を選択
+//   2. GROUP_ID 指定なら直接 /v1/betaGroups/<id> を引く。
+//      未指定なら /v1/betaGroups?filter[app]=<id> から NFKC 正規化後の名前で
+//      GROUP_NAME 一致 & isInternalGroup=true を選択。
 //   3. /v1/betaGroups/<id>/betaTesters で現在のメンバー email 集合を取得
 //   4. 追加候補 = 全 user - 既存 - EXCLUDE_EMAILS
 //   5. DRY_RUN=true なら計画表示で終了
@@ -26,6 +29,7 @@ import { buildAscClient } from './lib/asc-auth.mjs';
 
 const { ASC_APP_ID } = process.env;
 const GROUP_NAME = process.env.GROUP_NAME ?? 'キブンヤ テスト';
+const GROUP_ID = (process.env.GROUP_ID ?? '').trim();
 const DRY_RUN = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
 const EXCLUDE_EMAILS = new Set(
   (process.env.EXCLUDE_EMAILS ?? 'sk19880328@gmail.com')
@@ -43,6 +47,12 @@ const client = buildAscClient();
 
 function header(s) {
   console.log('\n=== ' + s + ' ===');
+}
+
+// 全角/半角スペースや異種空白の混在で文字列比較が外れるのを防ぐ。
+// NFKC で互換分解 (U+3000 → U+0020 等) → 連続空白を1つに → trim。
+function normalizeName(s) {
+  return (s ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 }
 
 async function fetchAllUsers() {
@@ -66,8 +76,23 @@ async function fetchAllUsers() {
   return users;
 }
 
-async function findInternalGroup() {
+async function findGroup() {
+  // GROUP_ID が明示指定されていれば最優先 (名前マッチの揺れを完全に回避)。
+  if (GROUP_ID) {
+    header(`Beta Group ID 直接指定: ${GROUP_ID}`);
+    const resp = await client.get(`/betaGroups/${GROUP_ID}`);
+    const g = resp.data;
+    const a = g.attributes ?? {};
+    console.log(`取得: name="${a.name}"  internal=${!!a.isInternalGroup}`);
+    if (!a.isInternalGroup) {
+      console.log('[warn] このグループは internal ではありません (続行はします)');
+    }
+    return g;
+  }
+
+  // 名前マッチは NFKC 正規化 + 連続空白圧縮で揺れを吸収。
   header(`Beta Group "${GROUP_NAME}" (internal) を検索`);
+  const target = normalizeName(GROUP_NAME);
   const resp = await client.get('/betaGroups', {
     'filter[app]': ASC_APP_ID,
     limit: 50,
@@ -76,20 +101,25 @@ async function findInternalGroup() {
   console.log('検出 BetaGroup (app=' + ASC_APP_ID + '):');
   for (const g of groups) {
     const a = g.attributes ?? {};
-    console.log(`  - id=${g.id}  name="${a.name}"  internal=${!!a.isInternalGroup}`);
-  }
-  const target = groups.find(
-    (g) =>
-      g.attributes?.name === GROUP_NAME &&
-      g.attributes?.isInternalGroup === true,
-  );
-  if (!target) {
-    throw new Error(
-      `[error] 内部 BetaGroup "${GROUP_NAME}" が見つかりません。ASC で先にグループを作成してください。`,
+    const norm = normalizeName(a.name);
+    const matched = norm === target && a.isInternalGroup === true;
+    console.log(
+      `  - id=${g.id}  name="${a.name}"  normalized="${norm}"  internal=${!!a.isInternalGroup}  ${matched ? '← match' : ''}`,
     );
   }
-  console.log(`\n選択: id=${target.id}  name="${target.attributes.name}"`);
-  return target;
+  const found = groups.find(
+    (g) =>
+      normalizeName(g.attributes?.name) === target &&
+      g.attributes?.isInternalGroup === true,
+  );
+  if (!found) {
+    throw new Error(
+      `[error] 内部 BetaGroup "${GROUP_NAME}" (正規化後 "${target}") が見つかりません。` +
+        ` GROUP_ID を直接指定するか、ASC でグループを作成してください。`,
+    );
+  }
+  console.log(`\n選択: id=${found.id}  name="${found.attributes.name}"`);
+  return found;
 }
 
 async function fetchGroupMembers(groupId) {
@@ -162,12 +192,13 @@ async function addUserAsTester(groupId, user) {
 (async () => {
   try {
     console.log('DRY_RUN        :', DRY_RUN);
+    console.log('GROUP_ID       :', GROUP_ID || '(name lookup)');
     console.log('GROUP_NAME     :', GROUP_NAME);
     console.log('EXCLUDE_EMAILS :', [...EXCLUDE_EMAILS].join(','));
     console.log('ASC_APP_ID     :', ASC_APP_ID);
 
     const users = await fetchAllUsers();
-    const group = await findInternalGroup();
+    const group = await findGroup();
     const current = await fetchGroupMembers(group.id);
 
     const currentEmails = new Set(current.map((m) => m.email).filter(Boolean));
