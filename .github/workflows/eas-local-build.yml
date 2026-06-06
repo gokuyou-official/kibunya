@@ -1,0 +1,158 @@
+name: EAS Build (local on macOS) + Submit
+
+# macOS runner 上で `eas build --local` を実行し iOS IPA をローカルビルドする
+# ワークフロー。EAS Cloud Build の枠 (月次 quota) を消費しない。
+#
+# 仕組み:
+#   1) macos-latest で Xcode/CocoaPods が使えるため、--local で本物の iOS
+#      native build を実行できる (cloud に投げない)。
+#   2) 認証情報 (cert / provisioning profile) は EXPO_TOKEN 経由で EAS service
+#      から自動取得 (build credit を消費せず credential サービスだけ利用)。
+#   3) submit は別ステップで `eas submit --path` を実行し、生成した IPA を
+#      App Store Connect に投入。submit は元から build credit 非消費。
+#
+# 必須 secret:
+#   EXPO_TOKEN      Expo / EAS 認証
+#   ASC_KEY_ID      ASC API key の Key ID (eas submit 非対話化に使用)
+#   ASC_ISSUER_ID   ASC API key の Issuer ID
+#   ASC_P8_KEY      AuthKey_<KEY_ID>.p8 の本文 (PEM)
+#
+# 注意:
+#   - public リポジトリの macOS runner は無料枠が広いが、ビルドは長め
+#     (queue+30-50分)。 timeout-minutes は余裕を持って 120 に設定。
+#   - submit は build profile に関わらず submit.production の config を使う
+#     (eas.json で submit は production しか定義されていないため)。
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile (production = TestFlight 適合、preview = Ad Hoc 内部)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+      auto_submit:
+        description: 'ビルド成功後、自動で App Store Connect に submit する'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: eas-local-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Local iOS build (macOS) + optional submit
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # expo-doctor は EAS Cloud Build 側でしか効かないので明示的に skip
+      EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '1'
+    steps:
+      - name: Validate EXPO_TOKEN
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN secret is not set"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build IPA locally (no EAS build credit)
+        # --local で macOS runner 上で native build を回す。
+        # --non-interactive を入れないと "Y/n?" 系プロンプトで停止する。
+        run: |
+          eas build \
+            --local \
+            --platform ios \
+            --profile "${{ inputs.profile }}" \
+            --non-interactive \
+            --output "./build.ipa"
+
+      - name: Verify IPA exists
+        run: |
+          if [ ! -f "./build.ipa" ]; then
+            echo "::error::build.ipa が生成されていません"
+            exit 1
+          fi
+          ls -lh ./build.ipa
+
+      - name: Upload IPA artifact
+        # submit が失敗しても IPA を再利用できるよう artifact 保管。
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-ipa-${{ inputs.profile }}-${{ github.run_id }}
+          path: ./build.ipa
+          retention-days: 7
+
+      - name: Prepare ASC API key for non-interactive submit
+        if: ${{ inputs.auto_submit == 'true' }}
+        env:
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          if [ -z "${ASC_P8_KEY:-}" ] || [ -z "${ASC_KEY_ID:-}" ] || [ -z "${ASC_ISSUER_ID:-}" ]; then
+            echo "::error::ASC_P8_KEY / ASC_KEY_ID / ASC_ISSUER_ID secrets が不足。手動 submit に切替を。"
+            exit 1
+          fi
+          mkdir -p ./.asc
+          printf '%s' "$ASC_P8_KEY" > ./.asc/AuthKey.p8
+          chmod 600 ./.asc/AuthKey.p8
+
+          # eas.json の submit.production.ios に ASC API key 設定を一時注入。
+          # ascApiKeyPath / ascApiKeyId / ascApiIssuerId が EAS submit の
+          # ASC API 認証フィールド (Apple ID + app-specific password の代替)。
+          # commit はしない / 後で git checkout で巻き戻す。
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
+            cfg.submit = cfg.submit || {};
+            cfg.submit.production = cfg.submit.production || {};
+            cfg.submit.production.ios = cfg.submit.production.ios || {};
+            cfg.submit.production.ios.ascApiKeyPath = './.asc/AuthKey.p8';
+            cfg.submit.production.ios.ascApiKeyId = process.env.ASC_KEY_ID;
+            cfg.submit.production.ios.ascApiIssuerId = process.env.ASC_ISSUER_ID;
+            fs.writeFileSync('eas.json', JSON.stringify(cfg, null, 2));
+            console.log('eas.json injected ASC API key fields (in-memory only).');
+          "
+
+      - name: Submit to App Store Connect
+        if: ${{ inputs.auto_submit == 'true' }}
+        # build profile が preview の場合でも submit は production プロファイル
+        # 固定 (eas.json で submit は production しか定義していないため)。
+        run: |
+          eas submit \
+            --platform ios \
+            --path "./build.ipa" \
+            --profile production \
+            --non-interactive
+
+      - name: Cleanup credentials and restore eas.json
+        if: always()
+        run: |
+          rm -rf ./.asc
+          # 万一ワークフロー失敗で eas.json が改変されたままになるのを防ぐ。
+          git checkout -- eas.json || true
