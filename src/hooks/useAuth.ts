@@ -13,6 +13,18 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { auth, db } from '../config/firebase';
 
+// エラーオブジェクトから安全に構造化情報を抜く。
+// TestFlight ではログが見えないので、最低限の構造を console に流して
+// Crashlytics/Sentry を後から入れた時に解析可能な形を保つ。
+function logAuthError(tag: string, e: any) {
+  // eslint-disable-next-line no-console
+  console.error(`[auth] ${tag}`, {
+    code: e?.code ?? null,
+    name: e?.name ?? null,
+    message: typeof e?.message === 'string' ? e.message : String(e),
+  });
+}
+
 export function useAuth() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,7 +134,7 @@ export function useAuth() {
         console.warn('signInWithApple: post-auth error ignored', e);
         return auth.currentUser;
       }
-      console.error('signInWithApple error', e);
+      logAuthError('signInWithApple', e);
       throw e;
     }
   }, [upsertUserDoc]);
@@ -130,9 +142,14 @@ export function useAuth() {
   // メール+パスワード ログイン (アカウントが無ければ失敗)
   const signInWithEmail = useCallback(
     async (email: string, password: string) => {
-      const result = await signInWithEmailAndPassword(auth, email, password);
-      await upsertUserDoc(result.user);
-      return result.user;
+      try {
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        await upsertUserDoc(result.user);
+        return result.user;
+      } catch (e: any) {
+        logAuthError('signInWithEmail', e);
+        throw e;
+      }
     },
     [upsertUserDoc],
   );
@@ -140,9 +157,14 @@ export function useAuth() {
   // メール+パスワード 新規登録
   const signUpWithEmail = useCallback(
     async (email: string, password: string) => {
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      await upsertUserDoc(result.user);
-      return result.user;
+      try {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        await upsertUserDoc(result.user);
+        return result.user;
+      } catch (e: any) {
+        logAuthError('signUpWithEmail', e);
+        throw e;
+      }
     },
     [upsertUserDoc],
   );
@@ -150,8 +172,8 @@ export function useAuth() {
   const signOut = useCallback(async () => {
     try {
       await fbSignOut(auth);
-    } catch (e) {
-      console.error('signOut error', e);
+    } catch (e: any) {
+      logAuthError('signOut', e);
       throw e;
     }
   }, []);

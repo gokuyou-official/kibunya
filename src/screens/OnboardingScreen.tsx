@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
 import { useAuth } from '../hooks/useAuth';
-import { firebaseAuthErrorToJa } from '../utils/firebaseError';
+import { formatAuthErrorAlert } from '../utils/firebaseError';
 
 export default function OnboardingScreen() {
   const { signInWithApple, signInWithEmail, signUpWithEmail } = useAuth();
@@ -41,7 +41,7 @@ export default function OnboardingScreen() {
       // 「Appleでログイン」ラベルが一瞬戻ってチラつく原因になる。
     } catch (e: any) {
       setBusy(false);
-      Alert.alert('ログイン失敗', firebaseAuthErrorToJa(e));
+      Alert.alert('ログイン失敗', formatAuthErrorAlert(e));
     }
   };
 
@@ -61,7 +61,7 @@ export default function OnboardingScreen() {
     } catch (e: any) {
       Alert.alert(
         emailMode === 'signup' ? '登録失敗' : 'ログイン失敗',
-        firebaseAuthErrorToJa(e),
+        formatAuthErrorAlert(e),
       );
     } finally {
       setBusy(false);
