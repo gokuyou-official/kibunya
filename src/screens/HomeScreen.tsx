@@ -97,7 +97,8 @@ export default function HomeScreen({ navigation }: any) {
         }
       }
       if (tokens.length > 0) {
-        const body = `${myName}さん、いきますかー${activity.waitEmoji}`;
+        const areaPart = area.trim() ? ` (${area.trim()})` : '';
+        const body = `${myName}さん、いきますかー${areaPart}${activity.waitEmoji}`;
         await sendPushNotification(tokens, 'KIBUNYA', body, {
           notificationIds,
           type: 'kibun',

@@ -80,8 +80,13 @@ export function useAuth() {
       const snap = await getDoc(ref);
       if (!snap.exists()) {
         // 新規ユーザー: 全フィールド初期化して保存
+        // ⚠️ name は `??` ではなく `||` で chain。空文字を素通しさせない。
+        const safeName =
+          (typeof name === 'string' && name.trim()) ||
+          user.displayName ||
+          'ゲスト';
         await setDoc(ref, {
-          name: name ?? user.displayName ?? 'ゲスト',
+          name: safeName,
           email: user.email ?? '',
           area: '',
           bio: '',
@@ -184,11 +189,13 @@ export function useAuth() {
   );
 
   // メール+パスワード 新規登録
+  // name を必須にして upsertUserDoc に渡す。これがないと users/{uid}.name が
+  // 'ゲスト' になり、自分の名前と送信通知の senderName が "ゲスト" 固定になる。
   const signUpWithEmail = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, name: string) => {
       try {
         const result = await createUserWithEmailAndPassword(auth, email, password);
-        await upsertUserDoc(result.user);
+        await upsertUserDoc(result.user, name.trim());
         return result.user;
       } catch (e: any) {
         logAuthError('signUpWithEmail', e);

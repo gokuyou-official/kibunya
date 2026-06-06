@@ -43,9 +43,19 @@ export function useFriends(currentUserId: string | undefined) {
             const u = uSnap.data() ?? {};
             const lastSeenMs = u.lastSeen?.toMillis?.() ?? 0;
             const isOnline = Date.now() - lastSeenMs < ONLINE_THRESHOLD_MS;
+            // ⚠️ name フォールバックは `??` ではなく `||` チェインを使う。
+            // `u.name ?? 'フレンド'` だと空文字 '' を素通しして表示が空になる
+            // (新規メール登録ユーザーで実際に発生していた)。
+            // 優先度: trim 後の name → email の @ より前 → 'フレンド'
+            const emailLocal =
+              typeof u.email === 'string' ? u.email.split('@')[0] : '';
+            const friendName =
+              (typeof u.name === 'string' && u.name.trim()) ||
+              emailLocal ||
+              'フレンド';
             list.push({
               id: friendId,
-              name: u.name ?? 'フレンド',
+              name: friendName,
               fcmToken: u.fcmToken,
               lastSeen: u.lastSeen,
               isOnline,

@@ -4,7 +4,6 @@ import {
   collection,
   query,
   where,
-  orderBy,
   onSnapshot,
   doc,
   updateDoc,
@@ -41,10 +40,13 @@ export function useNotifications(
       setLoading(false);
       return;
     }
+    // NOTE: orderBy('createdAt') を Firestore 側で使うと composite index
+    // (receiverId + createdAt) が必須になり、未 deploy 時は query が silent
+    // fail して "通知が来ない" 症状になる。JS 側で sort することで
+    // single-field index (auto) だけで動かす。
     const q = query(
       collection(db, 'notifications'),
       where('receiverId', '==', currentUserId),
-      orderBy('createdAt', 'desc'),
     );
     const unsub = onSnapshot(
       q,
@@ -53,6 +55,11 @@ export function useNotifications(
           id: d.id,
           ...(d.data() as Omit<Notification, 'id'>),
         }));
+        list.sort((a, b) => {
+          const ma = (a.createdAt as any)?.toMillis?.() ?? 0;
+          const mb = (b.createdAt as any)?.toMillis?.() ?? 0;
+          return mb - ma; // desc
+        });
         setNotifications(list);
         setLoading(false);
       },

@@ -30,7 +30,6 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   collection,
   onSnapshot,
-  orderBy,
   query,
   where,
 } from 'firebase/firestore';
@@ -60,11 +59,14 @@ export function useMatchEvents(currentUserId: string | undefined) {
       return;
     }
 
+    // NOTE: orderBy('createdAt') を入れると composite index
+    // (receiverId + type + createdAt) が必須になる。未 deploy だと
+    // query が silent fail し マッチオーバーレイが永久に発火しない。
+    // 並び順は dedup ロジックに影響しないため orderBy は外す。
     const q = query(
       collection(db, 'notifications'),
       where('receiverId', '==', currentUserId),
       where('type', '==', 'reaction'),
-      orderBy('createdAt', 'desc'),
     );
 
     const unsub = onSnapshot(

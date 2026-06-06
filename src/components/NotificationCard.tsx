@@ -46,15 +46,20 @@ export default function NotificationCard({ notification, onReact }: Props) {
     }
   };
 
+  // senderName 安全フォールバック (古いデータで空文字が混ざっている可能性)
+  const safeSenderName =
+    (typeof notification.senderName === 'string' && notification.senderName.trim()) ||
+    'フレンド';
+
   // 表示メッセージ
   let message: string;
   if (isReaction) {
-    message = `${notification.senderName}さんが「かー」しました ${activity.matchEmoji}`;
+    message = `${safeSenderName}さんが「かー」しました ${activity.matchEmoji}`;
   } else if (reacted) {
-    message = `${notification.senderName}さんの${activity.label}の気分 — かーした`;
+    message = `${safeSenderName}さんの${activity.label}の気分 — かーした`;
   } else {
     const areaPart = notification.area ? ` (${notification.area})` : '';
-    message = `${notification.senderName}さんが${activity.label}の気分${areaPart}`;
+    message = `${safeSenderName}さんが${activity.label}の気分${areaPart}`;
   }
 
   return (
@@ -72,7 +77,7 @@ export default function NotificationCard({ notification, onReact }: Props) {
         </Text>
       </View>
       <View style={styles.body}>
-        <Text style={styles.name}>{notification.senderName}</Text>
+        <Text style={styles.name}>{safeSenderName}</Text>
         <Text style={styles.message}>{message}</Text>
         <Text style={styles.time}>{formatTime(notification.createdAt)}</Text>
       </View>

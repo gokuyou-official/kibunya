@@ -29,6 +29,7 @@ export default function OnboardingScreen() {
   //   既存ユーザーは sign-out した稀ケースのみこの画面に来るため、その時だけ
   //   「ログイン」タブに自分で切り替えてもらう方が全体のフリクションが少ない。
   const [emailMode, setEmailMode] = useState<'login' | 'signup'>('signup');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -58,10 +59,14 @@ export default function OnboardingScreen() {
       Alert.alert('入力エラー', 'メールアドレスと6文字以上のパスワードを入力してください');
       return;
     }
+    if (emailMode === 'signup' && !name.trim()) {
+      Alert.alert('入力エラー', 'なまえ(表示名)を入力してください');
+      return;
+    }
     setBusy(true);
     try {
       if (emailMode === 'signup') {
-        await signUpWithEmail(email.trim(), password);
+        await signUpWithEmail(email.trim(), password, name.trim());
       } else {
         await signInWithEmail(email.trim(), password);
       }
@@ -158,6 +163,18 @@ export default function OnboardingScreen() {
                     </Text>
                   </Pressable>
                 </View>
+                {emailMode === 'signup' && (
+                  <TextInput
+                    value={name}
+                    onChangeText={setName}
+                    placeholder="なまえ (表示名)"
+                    placeholderTextColor={colors.textLight}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={20}
+                    style={styles.input}
+                  />
+                )}
                 <TextInput
                   value={email}
                   onChangeText={setEmail}
