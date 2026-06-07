@@ -69,16 +69,21 @@ jobs:
       - name: List installed Xcode versions (debug)
         run: ls -1 /Applications | grep -i '^Xcode' || true
 
-      - name: Select Xcode 16.4 (full iOS platform installed)
-        # Xcode 16.1 は app bundle のみで iOS 18.1 platform 未インストールの
-        # 環境にいる (Run #3 で "iOS 18.1 is not installed" エラー判明)。
-        # Xcode 16.4 は iOS 18.4 platform が完備されている (Run #1 では SDK
-        # 解決まで進んだ実績)。Swift コンパイラ起因の strict concurrency
-        # エラーは scripts/patch-expo-modules-core.mjs で解消するため、
-        # Xcode バージョン側は SDK 完備の 16.4 に揃える。
+      - name: Select Xcode 26.1 (iOS 26 SDK required for expo-notifications)
+        # Run #7 で expo-notifications@55.0.23 の DateComponentsSerializer.swift:9
+        # が DateComponents.isRepeatedDay (iOS 26 API) を参照していることが判明。
+        # Xcode 16.4 の iPhoneOS18.5.sdk には存在しないため compile 不能。
+        # runner には Xcode 26.0/26.1/26.2/26.3 系も installed されているため
+        # iOS 26 SDK を持つ Xcode 26.1 を選択。
+        #
+        # 懸念: Xcode 26 の Swift がさらに新しくなり (Swift 7 系?) Swift 5 mode 互換が
+        # 落ちている可能性。ただし plugins/withSwiftConcurrencyWorkaround.js の
+        # Podfile post_install で全 Pod target に SWIFT_VERSION='5.0' を強制し、
+        # 全 .swift ファイルの Swift 6+ isolated conformance を regex で
+        # Swift 5 互換に変換しているため、原理的にこのまま通る想定。
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.4'
+          xcode-version: '26.1'
 
       - name: Verify Xcode
         run: xcodebuild -version
