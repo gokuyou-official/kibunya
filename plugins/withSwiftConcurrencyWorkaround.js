@@ -4,22 +4,28 @@
 //   expo-modules-core 55.0.25 のソースが Swift 6 language mode 前提で
 //   書かれており (s.swift_version = '6.0' + isolated conformance 構文)、
 //   Xcode 16.x の Swift 6.x コンパイラが strict concurrency を強制して
-//   ビルド失敗する (Run #1〜#4 で確認)。
+//   ビルド失敗する。
 //
-//   workflow 内で scripts/patch-expo-modules-core.mjs を走らせても、
-//   `eas build --local` は project を temp dir に展開して
-//   `npm install` を再実行するため、外側 node_modules への patch が
-//   build に反映されない。
+//   workflow 内で外側 node_modules を patch しても、`eas build --local` は
+//   project を temp dir に展開して `npm install` を再実行するため反映されない。
 //
-// このプラグインは prebuild 中に temp dir の中で動くため、
-// (a) Podfile に post_install hook を注入して全 Pod target の
-//     SWIFT_VERSION='5.0' / SWIFT_STRICT_CONCURRENCY='minimal' を強制
-// (b) expo-modules-core の Swift 6-only 構文 (isolated conformance) を
-//     Swift 5 互換に書き換え (Swift 5 mode で parse 可能にする)
-// の両方を temp dir の正しい場所で適用する。
+// このプラグインは prebuild 中 (temp dir 内) に動くため、
+//   (a) Podfile に post_install hook を注入して全 Pod target の
+//       SWIFT_VERSION='5.0' / SWIFT_STRICT_CONCURRENCY='minimal' を強制
+//   (b) node_modules 配下の全 .swift ファイルを regex スキャンし、
+//       Swift 6 only の isolated conformance 構文
+//         (class|extension|struct|protocol|enum) X: ... @MainActor Y ... {
+//       を Swift 5 互換の
+//         @MainActor
+//         (class|extension|struct|protocol|enum) X: ... Y ... {
+//       に書き換える (@MainActor が declaration 全体に伝播するため意味は等価)。
 //
-// (a) だけだと parse error ("unknown attribute 'MainActor'")、
+// (a) だけだと SWIFT_VERSION=5.0 で Swift 6-only 構文が parse error、
 // (b) だけだと strict concurrency error が残るため、両方必須。
+//
+// 注意:
+//   regex scan は per-line 処理。Multi-line 宣言は対応外。
+//   今のところ expo-modules-core 55.0.25 では single-line のみ使われている。
 const fs = require('fs');
 const path = require('path');
 
@@ -50,26 +56,98 @@ const POST_INSTALL_BLOCK = `
   # === end ${SENTINEL} ===
 `;
 
-const SOURCE_PATCHES = [
-  {
-    rel: 'node_modules/expo/node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift',
-    from: 'extension UIView: @MainActor AnyArgument {',
-    to: '@MainActor\nextension UIView: AnyArgument {',
-  },
-  {
-    rel: 'node_modules/expo/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift',
-    from: 'extension ExpoSwiftUI.SwiftUIVirtualView: @MainActor ExpoSwiftUI.ViewWrapper {',
-    to: '@MainActor\nextension ExpoSwiftUI.SwiftUIVirtualView: ExpoSwiftUI.ViewWrapper {',
-  },
-  // Swift 6 のみで通る「class 宣言の inheritance リスト内 @MainActor」構文。
-  // Run #5 で SwiftUIHostingView.swift:45 が未パッチで "unknown attribute 'MainActor'"
-  // が再発したため追加。`@MainActor` を class 宣言の前に置く形 (Swift 5 valid) に書換。
-  {
-    rel: 'node_modules/expo/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift',
-    from: '  public final class HostingView<Props: ViewProps, ContentView: View<Props>>: ExpoView, @MainActor AnyExpoSwiftUIHostingView {',
-    to: '  @MainActor\n  public final class HostingView<Props: ViewProps, ContentView: View<Props>>: ExpoView, AnyExpoSwiftUIHostingView {',
-  },
+// 走査対象: node_modules 配下の .swift ファイル全部。
+// ただし速度上 NODE_MODULES_SCAN_ROOTS で絞る (expo 系のみで十分)。
+// 万一他パッケージで Swift 6 構文が混入したら追加すれば良い。
+const NODE_MODULES_SCAN_ROOTS = [
+  'node_modules/expo',
+  'node_modules/@expo',
 ];
+
+// per-line transformation:
+//   declaration line で inheritance list 内の `(: |, )@MainActor ` を除去し、
+//   declaration の直前に `@MainActor` 行を追加する。
+//   - declaration keyword は class/extension/struct/protocol/enum
+//   - `@MainActor ` (trailing space) を `: ` または `, ` の直後で検出
+//   - 関数型注釈の `@escaping @MainActor (...)` は declaration ではないので
+//     regex がマッチせず無視される
+function transformSwift6IsolatedConformance(content) {
+  const lines = content.split('\n');
+  const out = [];
+  let patches = 0;
+
+  for (const line of lines) {
+    if (!line.includes('@MainActor')) {
+      out.push(line);
+      continue;
+    }
+    // 必要条件: indent + 任意 modifiers + (class|extension|struct|protocol|enum)
+    //           + 任意の文字 + `:` (inheritance 開始) + 任意の文字 + `@MainActor `
+    //           + 任意の文字 + `{`
+    const m = line.match(
+      /^(\s*)((?:(?:@?\w+|public|internal|private|fileprivate|open|final|indirect)\s+)*(?:class|extension|struct|protocol|enum)\b.*?:.*?@MainActor\s+.*\{)\s*$/,
+    );
+    if (!m) {
+      out.push(line);
+      continue;
+    }
+    const indent = m[1];
+    let decl = m[2];
+    // inheritance list 内の `(: |, ) @MainActor ` を除去。
+    // generic constraint の `<T: U>` 等は `<...>` 内なので影響しない
+    // (`@MainActor` が generic constraint に出ることは Swift 6 仕様上無い)。
+    decl = decl.replace(/([:,])\s*@MainActor\s+/g, '$1 ');
+    out.push(`${indent}@MainActor`);
+    out.push(`${indent}${decl}`);
+    patches += 1;
+  }
+
+  return { content: out.join('\n'), patches };
+}
+
+function walkSwiftFiles(dir, callback) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isSymbolicLink()) continue; // 安全のため symlink は辿らない
+    if (e.isDirectory()) {
+      walkSwiftFiles(full, callback);
+    } else if (e.isFile() && e.name.endsWith('.swift')) {
+      callback(full);
+    }
+  }
+}
+
+function patchSources(projectRoot) {
+  let scanned = 0;
+  let modified = 0;
+  let totalPatches = 0;
+  for (const root of NODE_MODULES_SCAN_ROOTS) {
+    const absRoot = path.join(projectRoot, root);
+    if (!fs.existsSync(absRoot)) continue;
+    walkSwiftFiles(absRoot, (file) => {
+      scanned += 1;
+      const orig = fs.readFileSync(file, 'utf8');
+      if (!orig.includes('@MainActor')) return;
+      const { content: next, patches } = transformSwift6IsolatedConformance(orig);
+      if (patches > 0 && next !== orig) {
+        fs.writeFileSync(file, next);
+        modified += 1;
+        totalPatches += patches;
+        const rel = path.relative(projectRoot, file);
+        console.log(`[${SENTINEL}] patched (${patches}x) ${rel}`);
+      }
+    });
+  }
+  console.log(
+    `[${SENTINEL}] scan summary: ${scanned} .swift files scanned, ${modified} files modified, ${totalPatches} sites patched`,
+  );
+}
 
 function patchPodfile(podfilePath) {
   if (!fs.existsSync(podfilePath)) {
@@ -91,29 +169,6 @@ function patchPodfile(podfilePath) {
   }
   fs.writeFileSync(podfilePath, contents);
   console.log(`[${SENTINEL}] Podfile patched (post_install override)`);
-}
-
-function patchSources(projectRoot) {
-  for (const { rel, from, to } of SOURCE_PATCHES) {
-    const file = path.join(projectRoot, rel);
-    if (!fs.existsSync(file)) {
-      console.warn(`[${SENTINEL}] source not found: ${rel}`);
-      continue;
-    }
-    const s = fs.readFileSync(file, 'utf8');
-    if (!s.includes(from) && s.includes(to)) {
-      console.log(`[${SENTINEL}] ${rel} already patched`);
-      continue;
-    }
-    if (!s.includes(from)) {
-      console.warn(
-        `[${SENTINEL}] target string not found in ${rel} (expo-modules-core structure may have changed)`,
-      );
-      continue;
-    }
-    fs.writeFileSync(file, s.replace(from, to));
-    console.log(`[${SENTINEL}] ${rel} patched (Swift 6 → 5 syntax)`);
-  }
 }
 
 module.exports = function withSwiftConcurrencyWorkaround(config) {
