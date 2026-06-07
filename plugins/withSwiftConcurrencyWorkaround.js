@@ -61,6 +61,14 @@ const SOURCE_PATCHES = [
     from: 'extension ExpoSwiftUI.SwiftUIVirtualView: @MainActor ExpoSwiftUI.ViewWrapper {',
     to: '@MainActor\nextension ExpoSwiftUI.SwiftUIVirtualView: ExpoSwiftUI.ViewWrapper {',
   },
+  // Swift 6 のみで通る「class 宣言の inheritance リスト内 @MainActor」構文。
+  // Run #5 で SwiftUIHostingView.swift:45 が未パッチで "unknown attribute 'MainActor'"
+  // が再発したため追加。`@MainActor` を class 宣言の前に置く形 (Swift 5 valid) に書換。
+  {
+    rel: 'node_modules/expo/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift',
+    from: '  public final class HostingView<Props: ViewProps, ContentView: View<Props>>: ExpoView, @MainActor AnyExpoSwiftUIHostingView {',
+    to: '  @MainActor\n  public final class HostingView<Props: ViewProps, ContentView: View<Props>>: ExpoView, AnyExpoSwiftUIHostingView {',
+  },
 ];
 
 function patchPodfile(podfilePath) {
