@@ -69,14 +69,16 @@ jobs:
       - name: List installed Xcode versions (debug)
         run: ls -1 /Applications | grep -i '^Xcode' || true
 
-      - name: Select Xcode 16.1 (Expo SDK 55 known-good)
-        # macos-latest のデフォルト Xcode 16.4 だと expo-modules-core が
-        # Swift の main actor-isolated 制約で大量にコンパイルエラーになる
-        # (e.g. "property 'id' can not be referenced from a nonisolated context")。
-        # EAS Cloud Build が利用している 16.1 系に揃えれば通る。
+      - name: Select Xcode 16.4 (full iOS platform installed)
+        # Xcode 16.1 は app bundle のみで iOS 18.1 platform 未インストールの
+        # 環境にいる (Run #3 で "iOS 18.1 is not installed" エラー判明)。
+        # Xcode 16.4 は iOS 18.4 platform が完備されている (Run #1 では SDK
+        # 解決まで進んだ実績)。Swift コンパイラ起因の strict concurrency
+        # エラーは scripts/patch-expo-modules-core.mjs で解消するため、
+        # Xcode バージョン側は SDK 完備の 16.4 に揃える。
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.1'
+          xcode-version: '16.4'
 
       - name: Verify Xcode
         run: xcodebuild -version
