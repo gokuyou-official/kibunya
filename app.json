@@ -44,7 +44,8 @@
           "color": "#E8391F"
         }
       ],
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "./plugins/withSwiftConcurrencyWorkaround"
     ],
     "updates": {
       "fingerprintExperimentalEnabled": false

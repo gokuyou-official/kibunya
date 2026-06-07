@@ -97,15 +97,11 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Patch expo-modules-core for Xcode 16 / Swift compatibility
-        # 詳細: scripts/patch-expo-modules-core.mjs のヘッダ参照。
-        # 要点:
-        #  (a) podspec の swift_version を 6.0 → 5.0 へ降格 (strict concurrency 解除)
-        #  (b) Swift 6 only の isolated conformance 構文 ("extension X: @MainActor Y { ... }")
-        #      を Swift 5 互換の "@MainActor extension X: Y { ... }" に書き換え
-        # Run #1 (Xcode 16.4) / Run #2 (Xcode 16.1) で同一の compile error が
-        # 確認されたため、Xcode バージョン依存ではなくソース側の問題と判断。
-        run: node scripts/patch-expo-modules-core.mjs
+      # NOTE: expo-modules-core への source/Podfile パッチは
+      # plugins/withSwiftConcurrencyWorkaround.js (Expo config plugin) が
+      # `eas build --local` 内の prebuild 時に temp dir に対して適用する。
+      # workflow 側で外側 node_modules を patch しても EAS local build は
+      # 別 temp dir で fresh install するため反映されない (Run #4 で確認済)。
 
       - name: Build IPA locally (no EAS build credit)
         # --local で macOS runner 上で native build を回す。
