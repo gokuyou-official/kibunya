@@ -68,18 +68,25 @@ export default function HomeScreen({ navigation }: any) {
     Animated.spring(scale, { toValue: 1, friction: 5, useNativeDriver: true }).start();
   };
 
+  // 送信対象: active なフレンドだけ。フレンドタブのトグルで OFF にされた
+  // 相手はそもそも notification doc / push 通知の対象外。
+  const activeFriends = useMemo(
+    () => friends.filter((f) => f.active),
+    [friends],
+  );
+
   const handleSend = useCallback(async () => {
     if (!currentUser || sending || !activeId) return;
     setSending(true);
     try {
       const myName = profile.name || 'フレンド';
-      // 友達全員(興味に activeId を持つ人だけ受信する設計だが、
-      // FCM送信時は全員にtoken送る。通知フィルタは受信側で useNotifications が担う)
-      // tokens と notificationIds を同じインデックスで保持し、
-      // 受信側がタップしたときに自分宛の Firestore notification doc に飛べるようにする
+      // active なフレンドにだけ Firestore notification を書き込み、push を送る。
+      // tokens と notificationIds は同じインデックスで保持し、受信側がタップ
+      // したときに自分宛の Firestore notification doc に飛べるようにする。
+      // 受信側 useNotifications が更に興味でフィルタする 2 段構成は維持。
       const tokens: string[] = [];
       const notificationIds: string[] = [];
-      for (const f of friends) {
+      for (const f of activeFriends) {
         const docRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUser.uid,
           senderName: myName,
@@ -112,7 +119,7 @@ export default function HomeScreen({ navigation }: any) {
     } finally {
       setSending(false);
     }
-  }, [currentUser, friends, sending, activeId, profile.name, area, activity]);
+  }, [currentUser, activeFriends, sending, activeId, profile.name, area, activity]);
 
   const cancelWaiting = () => {
     setWaiting(false);
@@ -257,8 +264,12 @@ export default function HomeScreen({ navigation }: any) {
                 <Text style={styles.noFriends}>
                   まだ友達がいません。フレンドタブから招待してね
                 </Text>
+              ) : activeFriends.length === 0 ? (
+                <Text style={styles.noFriends}>
+                  通知対象のフレンドがいません (フレンドタブで ON に)
+                </Text>
               ) : (
-                friends.map((f) => (
+                activeFriends.map((f) => (
                   <FriendPill key={f.id} name={f.name} online={f.isOnline} />
                 ))
               )}

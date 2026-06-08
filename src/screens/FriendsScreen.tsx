@@ -9,6 +9,7 @@ import {
   Share,
   Alert,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
@@ -18,7 +19,18 @@ import { generateInviteLink } from '../utils/inviteLink';
 
 export default function FriendsScreen() {
   const { currentUser, signOut } = useAuth();
-  const { friends, loading } = useFriends(currentUser?.uid);
+  const { friends, loading, setFriendActive } = useFriends(currentUser?.uid);
+
+  const handleToggle = useCallback(
+    async (friendId: string, nextActive: boolean) => {
+      try {
+        await setFriendActive(friendId, nextActive);
+      } catch (e: any) {
+        Alert.alert('更新できませんでした', e?.message ?? '');
+      }
+    },
+    [setFriendActive],
+  );
 
   const handleInvite = useCallback(async () => {
     if (!currentUser) return;
@@ -32,20 +44,41 @@ export default function FriendsScreen() {
     }
   }, [currentUser]);
 
-  const renderItem = ({ item }: { item: Friend }) => (
-    <View style={styles.row}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{item.name.slice(0, 1)}</Text>
+  const renderItem = ({ item }: { item: Friend }) => {
+    const inactive = !item.active;
+    return (
+      <View style={[styles.row, inactive && styles.rowInactive]}>
+        <View style={[styles.avatar, inactive && styles.avatarInactive]}>
+          <Text style={[styles.avatarText, inactive && styles.textInactive]}>
+            {item.name.slice(0, 1)}
+          </Text>
+        </View>
+        <Text style={[styles.name, inactive && styles.textInactive]}>
+          {item.name}
+        </Text>
+        <View
+          style={[
+            styles.dot,
+            {
+              backgroundColor: inactive
+                ? colors.offline
+                : item.isOnline
+                  ? colors.online
+                  : colors.offline,
+            },
+          ]}
+        />
+        <Switch
+          value={item.active}
+          onValueChange={(v) => handleToggle(item.id, v)}
+          // iOS: trackColor は ON/OFF 両色、thumbColor は OFF 時の色。
+          // Android では track 単色なので適度な視認性を確保する。
+          trackColor={{ false: colors.cardBorder, true: colors.shu }}
+          ios_backgroundColor={colors.cardBorder}
+        />
       </View>
-      <Text style={styles.name}>{item.name}</Text>
-      <View
-        style={[
-          styles.dot,
-          { backgroundColor: item.isOnline ? colors.online : colors.offline },
-        ]}
-      />
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -137,6 +170,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 12,
   },
+  rowInactive: {
+    opacity: 0.5,
+  },
   avatar: {
     width: 36,
     height: 36,
@@ -145,9 +181,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  avatarInactive: {
+    backgroundColor: colors.cardBorder,
+  },
   avatarText: {
     color: colors.ai,
     fontWeight: '700',
+  },
+  textInactive: {
+    color: colors.textMuted,
   },
   name: {
     flex: 1,
