@@ -33,6 +33,7 @@ import NotificationsScreen from './src/screens/NotificationsScreen';
 import FriendsScreen from './src/screens/FriendsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import InterestSelectionScreen from './src/screens/InterestSelectionScreen';
+import NameInputScreen from './src/screens/NameInputScreen';
 import MatchOverlay from './src/components/MatchOverlay';
 
 const Tab = createBottomTabNavigator();
@@ -276,6 +277,20 @@ function Root() {
         <ActivityIndicator color={colors.shu} />
       </View>
     );
+  }
+
+  // 名前が空のレガシーユーザー救済ゲート。
+  // 旧ビルド (名前入力欄なし) で登録したユーザーや、Apple sign-in で
+  // fullName が取れなかったユーザーの users/{uid}.name が空文字 or
+  // 'ゲスト' になっており、フレンド名や通知の送信者名で 'フレンド'
+  // フォールバックが連発する。アプリ起動時にここで強制入力させる。
+  // ユーザーが NameInputScreen で保存すると profile.name が更新され
+  // この gate を抜けて次のステップに進む。
+  {
+    const trimmedName = (profile.name ?? '').trim();
+    if (!trimmedName || trimmedName === 'ゲスト') {
+      return <NameInputScreen />;
+    }
   }
 
   // 表示可能なアクティビティが無いならゲート。enabled が1つの場合は
