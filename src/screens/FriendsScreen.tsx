@@ -71,9 +71,12 @@ export default function FriendsScreen() {
         <Switch
           value={item.active}
           onValueChange={(v) => handleToggle(item.id, v)}
-          // iOS: trackColor は ON/OFF 両色、thumbColor は OFF 時の色。
-          // Android では track 単色なので適度な視認性を確保する。
-          trackColor={{ false: colors.cardBorder, true: colors.shu }}
+          // ON: ブランドのゴールド (yamabuki)。ブランド統一感を保ちつつ、
+          //     online dot の緑との視覚衝突も避けられる。
+          // OFF: cardBorder (半透明クリーム)。背景に馴染ませる。
+          // thumb は両 OS とも明るめ (cream) で常に視認できるように。
+          trackColor={{ false: colors.cardBorder, true: colors.yamabuki }}
+          thumbColor={colors.cream}
           ios_backgroundColor={colors.cardBorder}
         />
       </View>
@@ -94,6 +97,8 @@ export default function FriendsScreen() {
           <Text style={styles.inviteText}>招待する</Text>
         </Pressable>
       </View>
+
+      <Text style={styles.hint}>オンの友達に気分が届きます</Text>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.shu} />
@@ -153,6 +158,12 @@ const styles = StyleSheet.create({
     color: colors.cream,
     fontSize: 13,
     fontWeight: '600',
+  },
+  hint: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
   },
   list: {
     paddingHorizontal: 16,
