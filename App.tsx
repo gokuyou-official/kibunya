@@ -358,7 +358,15 @@ function Root() {
         useMatchEvents が dedup 済みのキューを返すため、ここでは
         current を visible に流すだけ。
       */}
+      {/*
+        key にイベント ID を渡し、queue 内で次イベントに切り替わる時に
+        MatchOverlay を unmount/remount させる。これにより内部の
+        useEffect (enter animation 初期化) が確実に再実行され、
+        backdropOpacity 等の Animated.Value が前イベントの値で stuck
+        するバグを根本的に防ぐ。
+      */}
       <MatchOverlay
+        key={matchEvent?.id ?? 'none'}
         visible={!!matchEvent}
         senderName={matchEvent?.senderName ?? ''}
         activityId={matchEvent?.activity ?? 'drinking'}

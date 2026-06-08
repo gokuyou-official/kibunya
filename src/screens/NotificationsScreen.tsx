@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { doc, getDoc } from 'firebase/firestore';
 import { colors } from '../config/colors';
 import { useAuth } from '../hooks/useAuth';
@@ -24,8 +25,20 @@ export default function NotificationsScreen({ route }: any) {
     notifications,
     unreadCount,
     loading,
+    markAllAsRead,
     reactToNotification,
   } = useNotifications(currentUser?.uid, profile.interests);
+
+  // アラートタブが focus されたら未読を全部既読にする (バッジリセット)。
+  // 「かー」を返したかどうかとは独立した「見た」の概念。
+  // 既読化後もカードは残り、reactedBy=null の間は「かー」ボタンを押せる。
+  useFocusEffect(
+    useCallback(() => {
+      // 起動直後など notifications が空の間は no-op。
+      // markAllAsRead は内部で targets フィルタしているので無駄打ちにならない。
+      markAllAsRead();
+    }, [markAllAsRead]),
+  );
 
   // プッシュタップで指定された通知 ID にスクロール / 一時ハイライト
   const listRef = useRef<FlatList<any>>(null);

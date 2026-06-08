@@ -1,5 +1,5 @@
 // 通知カード(v2: activity別絵文字 + 「済👌」状態)
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -31,17 +31,29 @@ function formatTime(ts: any): string {
 
 export default function NotificationCard({ notification, onReact }: Props) {
   const [busy, setBusy] = useState(false);
+  // ⚠️ 連打防止は state ではなく ref で同期的に行う。
+  // state は setBusy → 次 render まで反映されないため、連打すると 1 回目の
+  // setBusy(true) が反映される前に 2 回目の handlePress が busy=false を
+  // 見て通過してしまい「かー」が複数送信される (実際に発生していた)。
+  const busyRef = useRef(false);
   const isReaction = notification.type === 'reaction';
   const activity = getActivity(notification.activity);
   const reacted = !!notification.reactedBy;
+  // 未読 highlight (黄色 bar) は isRead=false かつ未 react の時のみ。
   const unread = !notification.isRead && !reacted && !isReaction;
+  // 「かー」ボタンの表示条件は reactedBy / isReaction だけに依存する。
+  // isRead が true でも (= アラートタブを「見た」後でも) reacted でなければ
+  // ボタンは押せる状態のままにする。
+  const canReact = !reacted && !isReaction;
 
   const handlePress = async () => {
-    if (busy || !onReact) return;
+    if (busyRef.current || !onReact) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await onReact();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -81,13 +93,14 @@ export default function NotificationCard({ notification, onReact }: Props) {
         <Text style={styles.message}>{message}</Text>
         <Text style={styles.time}>{formatTime(notification.createdAt)}</Text>
       </View>
-      {unread ? (
+      {canReact ? (
         <Pressable
           onPress={handlePress}
           disabled={busy}
           style={({ pressed }) => [
             styles.reactBtn,
             pressed && { opacity: 0.7 },
+            busy && { opacity: 0.6 },
           ]}
         >
           {busy ? (

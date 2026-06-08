@@ -6,9 +6,11 @@ import {
   where,
   onSnapshot,
   doc,
+  getDoc,
   updateDoc,
   addDoc,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { sendPushNotification } from '../utils/pushNotifications';
@@ -94,7 +96,25 @@ export function useNotifications(
     }
   }, []);
 
+  // 一覧表示時点でまだ未読のものを一括 isRead=true。
+  // 「かー」を返したかどうかとは独立 (バッジは「見た」時点でリセット、
+  //  カードと「かー」ボタンは reactedBy=null の間は残す)。
+  const markAllAsRead = useCallback(async () => {
+    const targets = notifications.filter((n) => !n.isRead);
+    if (targets.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      for (const n of targets) {
+        batch.update(doc(db, 'notifications', n.id), { isRead: true });
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error('markAllAsRead error', e);
+    }
+  }, [notifications]);
+
   // 「かー」リアクション
+  // 重複防止のため Firestore 側で reactedBy が既に立っていれば早期 return。
   const reactToNotification = useCallback(
     async (
       notificationId: string,
@@ -106,6 +126,13 @@ export function useNotifications(
     ) => {
       if (!currentUserId) return;
       try {
+        // 二重防御 1: Firestore 側の状態確認。連打や複数端末からの同時実行を弾く。
+        const snap = await getDoc(doc(db, 'notifications', notificationId));
+        if (!snap.exists()) return;
+        if (snap.data()?.reactedBy) {
+          // 既に誰かが reacted。reaction 通知の重複生成を防ぐ。
+          return;
+        }
         await updateDoc(doc(db, 'notifications', notificationId), {
           reactedBy: currentUserId,
           isRead: true,
@@ -144,6 +171,7 @@ export function useNotifications(
     unreadCount,
     loading,
     markAsRead,
+    markAllAsRead,
     reactToNotification,
   };
 }

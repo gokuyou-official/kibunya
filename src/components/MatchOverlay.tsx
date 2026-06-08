@@ -105,18 +105,18 @@ export default function MatchOverlay({ visible, senderName, activityId, onClose 
     ]).start();
   }, [visible, backdropOpacity, emojiScale, titleOpacity, titleTranslateY, subOpacity]);
 
+  // ⚠️ close は Animated.timing → start callback → onClose の indirection を
+  // 廃止し、即 onClose() で Modal を unmount させる。
+  // 旧実装は fade-out 中 (180ms) backdrop Animated.View が透明だが全画面に
+  // 残ってタッチを奪い、次イベントの mount と race して visible=true のまま
+  // backdropOpacity=0 で stuck → タブバーが永久に反応しないバグになっていた。
+  // 退場アニメは Modal 標準の animationType="fade" に委譲。
   const handleClose = () => {
-    Animated.timing(backdropOpacity, {
-      toValue: 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start(() => {
-      onClose();
-    });
+    onClose();
   };
 
   return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={handleClose}>
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
       <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
         <Animated.View style={[styles.emojiBox, { transform: [{ scale: emojiScale }] }]}>
           <Text style={styles.emoji}>{activity.matchEmoji}</Text>
