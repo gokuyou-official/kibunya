@@ -1,26 +1,32 @@
-// Firebase Auth / Apple Sign-In エラーをユーザー向け日本語に変換し、
-// 同時にデバッグ用の生コードを保持する。
+// Firebase Auth / Apple Sign-In エラーをユーザー向け日本語に変換する。
 //
-// 目的: TestFlight 等でログが取れない環境でも、Alert にコードを併記する
-// ことでユーザー (テスター) がスクショで原因を報告できるようにする。
+// 方針:
+//   - Alert に表示するのはユーザー向けメッセージのみ。生のエラーコードや
+//     技術的な英文 message は出さない (テスターを混乱させない)。
+//   - デバッグ用には console.error にコード/メッセージを構造化して残す
+//     (Crashlytics 等を後から入れた時にも拾える形)。
 //
-// 想定外コードは「ログインに失敗しました (auth/xxx)」のように生コードを
-// 末尾に付ける。
+// メッセージ辞書のポリシー:
+//   - 各 code 別に「次に何をすれば良いか」が分かる行動指示を含める。
+//     例: "アカウントが見つかりません。「新規登録」タブから登録してください"
+//   - 既知 code に無いものは 1 種類の汎用 FALLBACK だけにまとめる。
 
 const MESSAGES: Record<string, string> = {
   // Email/Password
-  'auth/email-already-in-use': 'このメールアドレスは既に使われています。「ログイン」タブから入ってください',
+  'auth/email-already-in-use':
+    'このメールアドレスは既に使われています。「ログイン」タブから入ってください',
   'auth/invalid-email': 'メールアドレスの形式が正しくありません',
-  'auth/wrong-password': 'パスワードが間違っています',
-  'auth/user-not-found': 'アカウントが見つかりません。「新規登録」タブから作成してください',
-  'auth/weak-password': 'パスワードは6文字以上にしてください',
+  'auth/wrong-password': 'メールアドレスまたはパスワードが正しくありません',
+  'auth/user-not-found':
+    'アカウントが見つかりません。「新規登録」タブから登録してください',
+  'auth/weak-password': 'パスワードは6文字以上で入力してください',
   'auth/invalid-credential': 'メールアドレスまたはパスワードが正しくありません',
   'auth/missing-password': 'パスワードを入力してください',
   'auth/missing-email': 'メールアドレスを入力してください',
 
   // OAuth / Provider 系
   'auth/operation-not-allowed':
-    'このログイン方法は現在無効です (Firebase Console で有効化が必要)',
+    'このログイン方法は現在利用できません',
   'auth/account-exists-with-different-credential':
     '同じメールで別のログイン方法のアカウントが存在します',
   'auth/credential-already-in-use':
@@ -34,7 +40,7 @@ const MESSAGES: Record<string, string> = {
     'ネットワークエラーです。接続を確認してから再試行してください',
   'auth/timeout': 'タイムアウトしました。もう一度お試しください',
   'auth/too-many-requests':
-    '試行回数が多すぎます。しばらく時間をおいてお試しください',
+    'ログイン試行回数が多すぎます。しばらくしてから再度お試しください',
   'auth/internal-error':
     '一時的なエラーです。少し待ってからもう一度お試しください',
   'auth/quota-exceeded': '利用上限に達しました。時間をおいてお試しください',
@@ -42,7 +48,8 @@ const MESSAGES: Record<string, string> = {
   // アカウント状態
   'auth/user-disabled': 'このアカウントは無効化されています',
   'auth/requires-recent-login': '再度ログインが必要です',
-  'auth/user-token-expired': 'セッションの有効期限が切れました。再ログインしてください',
+  'auth/user-token-expired':
+    'セッションの有効期限が切れました。再ログインしてください',
 
   // Apple sign-in 側 (expo-apple-authentication)
   ERR_REQUEST_FAILED:
@@ -52,12 +59,12 @@ const MESSAGES: Record<string, string> = {
   ERR_INVALID_RESPONSE: 'Apple から不正な応答を受け取りました',
 };
 
-const FALLBACK = 'ログインに失敗しました';
+const FALLBACK = 'ログインに失敗しました。もう一度お試しください';
 
 export interface AuthErrorDetail {
-  message: string; // ユーザー向け本文
-  code: string;    // 生エラーコード (Alert 末尾に [code] で出す)
-  raw?: string;    // 追加情報 (message から先頭1行)
+  message: string; // ユーザー向け本文 (これだけ Alert に出す)
+  code: string;    // 生エラーコード (console / 解析用、UI には出さない)
+  raw?: string;    // Firebase が返した英文 message (デバッグ用)
 }
 
 export function firebaseAuthErrorDetail(e: unknown): AuthErrorDetail {
@@ -69,15 +76,8 @@ export function firebaseAuthErrorDetail(e: unknown): AuthErrorDetail {
       ? ((e as { message: string }).message ?? '').split('\n')[0]
       : undefined;
 
-  if (codeStr in MESSAGES) {
-    return { message: MESSAGES[codeStr], code: codeStr, raw: rawMessage };
-  }
-  // 未知コード: 本文は汎用、コードと message の頭を併記して原因特定に使う。
-  return {
-    message: FALLBACK,
-    code: codeStr,
-    raw: rawMessage,
-  };
+  const message = codeStr in MESSAGES ? MESSAGES[codeStr] : FALLBACK;
+  return { message, code: codeStr, raw: rawMessage };
 }
 
 // 既存呼び出し互換: 文字列だけ欲しい場合のヘルパ。
@@ -85,9 +85,22 @@ export function firebaseAuthErrorToJa(e: unknown): string {
   return firebaseAuthErrorDetail(e).message;
 }
 
-// Alert の本文 1 つにまとめる (コードを必ず添えて原因特定可能に)。
+// Alert に表示する本文を組み立てる。
+//
+// 旧実装は [code] と raw 英文を末尾に併記してデバッグ用に視認できる形に
+// していたが、ユーザー (テスター) に対して "[auth/invalid-credential]
+// Firebase: Error (auth/invalid-credential)." のような技術的な文字列を
+// 見せると不必要に混乱させる。
+//
+// 現方針: Alert にはユーザー向けメッセージのみ。エラーコード等は
+// console.error に構造化して残し、後付けの Crashlytics/Sentry で拾う。
 export function formatAuthErrorAlert(e: unknown): string {
   const d = firebaseAuthErrorDetail(e);
-  const tail = d.raw && d.raw !== d.message ? `\n${d.raw}` : '';
-  return `${d.message}\n\n[${d.code}]${tail}`;
+  // eslint-disable-next-line no-console
+  console.error('[auth-error]', {
+    code: d.code,
+    rawMessage: d.raw,
+    userMessage: d.message,
+  });
+  return d.message;
 }

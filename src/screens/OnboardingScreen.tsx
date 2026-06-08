@@ -117,6 +117,14 @@ export default function OnboardingScreen() {
               </Pressable>
             )}
 
+            {Platform.OS === 'ios' && !showEmail && (
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>または</Text>
+                <View style={styles.dividerLine} />
+              </View>
+            )}
+
             {!showEmail ? (
               <Pressable
                 onPress={() => setShowEmail(true)}
@@ -301,6 +309,22 @@ const styles = StyleSheet.create({
     color: colors.yamabuki,
     fontSize: 15,
     fontWeight: '600',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.cardBorder,
+  },
+  dividerText: {
+    fontSize: 12,
+    color: colors.textLight,
+    fontWeight: '500',
   },
   emailForm: {
     gap: 10,
