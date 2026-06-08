@@ -151,8 +151,9 @@ jobs:
           chmod 600 ./.asc/AuthKey.p8
 
           # eas.json の submit.production.ios に ASC API key 設定を一時注入。
-          # ascApiKeyPath / ascApiKeyId / ascApiIssuerId が EAS submit の
-          # ASC API 認証フィールド (Apple ID + app-specific password の代替)。
+          # EAS submit の schema は flat な ascApiKeyPath/Id/IssuerId ではなく、
+          # nested の ascApiKey: { keyP8Path, keyId, issuerId } 形式を要求する
+          # (Run #8 で "ascApiIssuerId is not allowed" エラーから判明)。
           # commit はしない / 後で git checkout で巻き戻す。
           node -e "
             const fs = require('fs');
@@ -160,11 +161,13 @@ jobs:
             cfg.submit = cfg.submit || {};
             cfg.submit.production = cfg.submit.production || {};
             cfg.submit.production.ios = cfg.submit.production.ios || {};
-            cfg.submit.production.ios.ascApiKeyPath = './.asc/AuthKey.p8';
-            cfg.submit.production.ios.ascApiKeyId = process.env.ASC_KEY_ID;
-            cfg.submit.production.ios.ascApiIssuerId = process.env.ASC_ISSUER_ID;
+            cfg.submit.production.ios.ascApiKey = {
+              keyP8Path: './.asc/AuthKey.p8',
+              keyId: process.env.ASC_KEY_ID,
+              issuerId: process.env.ASC_ISSUER_ID,
+            };
             fs.writeFileSync('eas.json', JSON.stringify(cfg, null, 2));
-            console.log('eas.json injected ASC API key fields (in-memory only).');
+            console.log('eas.json injected ascApiKey (nested) for ASC API auth.');
           "
 
       - name: Submit to App Store Connect
