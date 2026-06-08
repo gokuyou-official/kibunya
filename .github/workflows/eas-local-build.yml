@@ -135,7 +135,13 @@ jobs:
           path: ./build.ipa
           retention-days: 7
 
-      - name: Prepare ASC API key for non-interactive submit
+      - name: Upload IPA to App Store Connect (xcrun altool)
+        # Run #8/#9 で eas.json への ASC API key 注入は schema validation で
+        # reject される事が判明 (flat / nested 両形式とも "not allowed")。
+        # eas-cli 経由は諦め、Xcode バンドルの altool で直接アップロードする。
+        # altool は ASC API key 認証 (--apiKey / --apiIssuer) を flag 直渡しで
+        # サポートし、P8 ファイルは ~/.appstoreconnect/private_keys/
+        # AuthKey_<KEY_ID>.p8 の規約パスから自動読込。
         if: ${{ inputs.auto_submit == 'true' }}
         env:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
@@ -143,47 +149,24 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           if [ -z "${ASC_P8_KEY:-}" ] || [ -z "${ASC_KEY_ID:-}" ] || [ -z "${ASC_ISSUER_ID:-}" ]; then
-            echo "::error::ASC_P8_KEY / ASC_KEY_ID / ASC_ISSUER_ID secrets が不足。手動 submit に切替を。"
+            echo "::error::ASC_P8_KEY / ASC_KEY_ID / ASC_ISSUER_ID secrets が不足"
             exit 1
           fi
-          mkdir -p ./.asc
-          printf '%s' "$ASC_P8_KEY" > ./.asc/AuthKey.p8
-          chmod 600 ./.asc/AuthKey.p8
 
-          # eas.json の submit.production.ios に ASC API key 設定を一時注入。
-          # EAS submit の schema は flat な ascApiKeyPath/Id/IssuerId ではなく、
-          # nested の ascApiKey: { keyP8Path, keyId, issuerId } 形式を要求する
-          # (Run #8 で "ascApiIssuerId is not allowed" エラーから判明)。
-          # commit はしない / 後で git checkout で巻き戻す。
-          node -e "
-            const fs = require('fs');
-            const cfg = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
-            cfg.submit = cfg.submit || {};
-            cfg.submit.production = cfg.submit.production || {};
-            cfg.submit.production.ios = cfg.submit.production.ios || {};
-            cfg.submit.production.ios.ascApiKey = {
-              keyP8Path: './.asc/AuthKey.p8',
-              keyId: process.env.ASC_KEY_ID,
-              issuerId: process.env.ASC_ISSUER_ID,
-            };
-            fs.writeFileSync('eas.json', JSON.stringify(cfg, null, 2));
-            console.log('eas.json injected ascApiKey (nested) for ASC API auth.');
-          "
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          mkdir -p "$KEY_DIR"
+          printf '%s' "$ASC_P8_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
 
-      - name: Submit to App Store Connect
-        if: ${{ inputs.auto_submit == 'true' }}
-        # build profile が preview の場合でも submit は production プロファイル
-        # 固定 (eas.json で submit は production しか定義していないため)。
-        run: |
-          eas submit \
-            --platform ios \
-            --path "./build.ipa" \
-            --profile production \
-            --non-interactive
+          # altool で IPA をアップロード。--type ios で iOS app と明示。
+          xcrun altool --upload-app \
+            --type ios \
+            --file ./build.ipa \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
 
-      - name: Cleanup credentials and restore eas.json
+      - name: Cleanup credentials
         if: always()
         run: |
-          rm -rf ./.asc
-          # 万一ワークフロー失敗で eas.json が改変されたままになるのを防ぐ。
-          git checkout -- eas.json || true
+          rm -rf "$HOME/.appstoreconnect/private_keys"
