@@ -6,6 +6,8 @@ import {
   createUserWithEmailAndPassword,
   signOut as fbSignOut,
   signInWithCredential,
+  sendPasswordResetEmail,
+  fetchSignInMethodsForEmail,
   OAuthProvider,
   User,
 } from 'firebase/auth';
@@ -205,6 +207,36 @@ export function useAuth() {
     [upsertUserDoc],
   );
 
+  // パスワードリセットメール送信。
+  // 成功/失敗は呼び出し側で Alert に出す。Firebase は存在しないメールでも
+  // 成功扱いになる場合があるが (email enumeration protection)、
+  // ユーザーに「届かない」と伝えるのは UX を悪化させるため、API 成功なら
+  // 同じ「送信しました」表示で統一する。
+  const sendPasswordReset = useCallback(async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (e: any) {
+      logAuthError('sendPasswordReset', e);
+      throw e;
+    }
+  }, []);
+
+  // 指定 email に紐付いている sign-in provider 一覧を取得。
+  // ログイン失敗時に「Apple アカウントです」案内を出す等の補助に使う。
+  // Firebase の email enumeration protection が ON だと空配列が返るので、
+  // 呼び出し側は「空配列 = 判定不能」として扱うこと。
+  const getSignInMethodsForEmail = useCallback(
+    async (email: string): Promise<string[]> => {
+      try {
+        return await fetchSignInMethodsForEmail(auth, email);
+      } catch (e: any) {
+        logAuthError('getSignInMethodsForEmail', e);
+        return [];
+      }
+    },
+    [],
+  );
+
   const signOut = useCallback(async () => {
     try {
       await fbSignOut(auth);
@@ -220,6 +252,8 @@ export function useAuth() {
     signInWithApple,
     signInWithEmail,
     signUpWithEmail,
+    sendPasswordReset,
+    getSignInMethodsForEmail,
     signOut,
   };
 }

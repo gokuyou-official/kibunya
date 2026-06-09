@@ -19,7 +19,13 @@ import { useAuth } from '../hooks/useAuth';
 import { formatAuthErrorAlert } from '../utils/firebaseError';
 
 export default function OnboardingScreen() {
-  const { signInWithApple, signInWithEmail, signUpWithEmail } = useAuth();
+  const {
+    signInWithApple,
+    signInWithEmail,
+    signUpWithEmail,
+    sendPasswordReset,
+    getSignInMethodsForEmail,
+  } = useAuth();
   const [showEmail, setShowEmail] = useState(false);
   // デフォルトは 'signup'。理由:
   //   新規ユーザーが「メールアドレスでログイン / 新規登録」ボタンを押した直後
@@ -71,10 +77,53 @@ export default function OnboardingScreen() {
         await signInWithEmail(email.trim(), password);
       }
     } catch (e: any) {
+      // ログイン失敗時、もし同じ email が Apple Sign-In で登録されている
+      // なら「Apple でログインしてください」と案内する。
+      // Firebase の email enumeration protection が ON だと
+      // fetchSignInMethodsForEmail が空配列を返すため、判定不能時は
+      // 通常エラーにフォールバック。
+      if (
+        emailMode === 'login' &&
+        (e?.code === 'auth/wrong-password' ||
+          e?.code === 'auth/invalid-credential' ||
+          e?.code === 'auth/user-not-found')
+      ) {
+        const methods = await getSignInMethodsForEmail(email.trim());
+        if (methods.includes('apple.com')) {
+          Alert.alert(
+            'Appleアカウントです',
+            'このアカウントはAppleでログインしてください',
+          );
+          return;
+        }
+      }
       Alert.alert(
         emailMode === 'signup' ? '登録失敗' : 'ログイン失敗',
         formatAuthErrorAlert(e),
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (busy) return;
+    if (!email.trim()) {
+      Alert.alert(
+        'メールアドレスを入力してください',
+        'パスワード再設定メールの送信先として、上のフォームにメールアドレスを入力してから「パスワードをお忘れですか？」を押してください。',
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      await sendPasswordReset(email.trim());
+      Alert.alert(
+        '再設定メールを送信しました',
+        `${email.trim()} 宛にパスワード再設定の手順を送信しました。メールをご確認ください。`,
+      );
+    } catch (e: any) {
+      Alert.alert('送信できませんでした', formatAuthErrorAlert(e));
     } finally {
       setBusy(false);
     }
@@ -217,6 +266,22 @@ export default function OnboardingScreen() {
                     </Text>
                   )}
                 </Pressable>
+
+                {emailMode === 'login' && (
+                  <Pressable
+                    onPress={handleForgotPassword}
+                    disabled={busy}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.forgotBtn,
+                      pressed && { opacity: 0.6 },
+                    ]}
+                  >
+                    <Text style={styles.forgotText}>
+                      パスワードをお忘れですか?
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             )}
           </View>
@@ -377,6 +442,17 @@ const styles = StyleSheet.create({
     color: colors.cream,
     fontSize: 15,
     fontWeight: '600',
+  },
+  forgotBtn: {
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 2,
+  },
+  forgotText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
   },
   footer: {
     flexDirection: 'row',
