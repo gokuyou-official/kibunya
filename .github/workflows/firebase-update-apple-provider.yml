@@ -18,7 +18,7 @@ on:
       dry_run:
         description: 'Dry run (現状確認のみ)。false で実際に PATCH'
         required: true
-        default: 'true'
+        default: 'false'
         type: choice
         options:
           - 'true'
