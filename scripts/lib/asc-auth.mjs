@@ -96,6 +96,7 @@ export function buildAscClient(env = process.env) {
     token,
     get: (p, query) => request('GET', p, { query }),
     post: (p, body) => request('POST', p, { body }),
+    patch: (p, body) => request('PATCH', p, { body }),
     delete: (p) => request('DELETE', p),
   };
 }
