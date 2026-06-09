@@ -1,16 +1,17 @@
 // App Store Connect 設定スクリプト
 //
 // 機能 (idempotent / 安全側):
-//   (1) primaryCategory を SOCIAL_NETWORKING に設定 (App Info の editable
-//       state 'PREPARE_FOR_SUBMISSION' に対して PATCH)
-//   (2) App Review Information の以下フィールドを設定:
-//         demoAccountName     ← reviewUserName
-//         demoAccountPassword ← reviewPassword
-//         notes               ← reviewNotes
-//         demoAccountRequired ← signsInRequired
-//       (editable な appStoreVersion の appStoreReviewDetail を PATCH。
-//        まだ無ければ POST)
-//   (3) 現在のバージョン状態を report
+//   App Review Information の以下フィールドを設定:
+//     demoAccountName     ← reviewUserName
+//     demoAccountPassword ← reviewPassword
+//     notes               ← reviewNotes
+//     demoAccountRequired ← signsInRequired
+//   (editable な appStoreVersion の appStoreReviewDetail を PATCH。
+//    まだ無ければ POST)
+//
+// 注意: primaryCategory は ASC API では UPDATE 不可 (Run #1 で 403
+//   FORBIDDEN_ERROR を確認)。Console での手動対応とし、このスクリプトの
+//   対象外。
 //
 // 必須 env:
 //   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY (or ASC_P8_KEY_PATH)
@@ -21,8 +22,6 @@ import { buildAscClient, fmtDate } from './lib/asc-auth.mjs';
 
 const { ASC_APP_ID } = process.env;
 const DRY_RUN = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
-
-const PRIMARY_CATEGORY_ID = 'SOCIAL_NETWORKING';
 
 // Review info の固定 payload。
 const REVIEW_INFO = {
@@ -42,26 +41,6 @@ const client = buildAscClient();
 
 function header(s) {
   console.log('\n=== ' + s + ' ===');
-}
-
-// editable な appInfo (state=PREPARE_FOR_SUBMISSION) を探す
-async function getEditableAppInfo() {
-  const resp = await client.get(`/apps/${ASC_APP_ID}/appInfos`);
-  const list = resp?.data ?? [];
-  return (
-    list.find(
-      (x) => x.attributes?.appStoreState === 'PREPARE_FOR_SUBMISSION',
-    ) ??
-    list.find((x) => x.attributes?.state === 'PREPARE_FOR_SUBMISSION') ??
-    list[0]
-  );
-}
-
-// primaryCategory リレーション更新
-async function setPrimaryCategory(appInfoId, categoryId) {
-  return client.patch(`/appInfos/${appInfoId}/relationships/primaryCategory`, {
-    data: { type: 'appCategories', id: categoryId },
-  });
 }
 
 // editable な appStoreVersion を探す
@@ -129,22 +108,10 @@ async function updateReviewDetail(detailId, attrs) {
   try {
     console.log('ASC_APP_ID :', ASC_APP_ID);
     console.log('DRY_RUN    :', DRY_RUN);
-
-    // -------- App Info / category 取得 --------
-    header('App Info (editable) を取得');
-    const appInfo = await getEditableAppInfo();
-    if (!appInfo) {
-      throw new Error('appInfo が取得できません');
-    }
-    const aiAttrs = appInfo.attributes ?? {};
-    console.log('appInfo.id              :', appInfo.id);
-    console.log('appStoreState           :', aiAttrs.appStoreState ?? '-');
-    console.log('state                   :', aiAttrs.state ?? '-');
-    const curCat = await client.get(
-      `/appInfos/${appInfo.id}/relationships/primaryCategory`,
+    console.log(
+      '\n[note] primaryCategory は ASC API では更新不可 (Run #1 で 403' +
+        ' FORBIDDEN)。Firebase Console / App Store Connect 上で手動対応のこと。',
     );
-    const curCatId = curCat?.data?.id ?? '(unset)';
-    console.log('current primaryCategory :', curCatId);
 
     // -------- appStoreVersion / reviewDetail 取得 --------
     header('AppStoreVersion (editable) を取得');
@@ -175,10 +142,9 @@ async function updateReviewDetail(detailId, attrs) {
       console.log('reviewDetail なし → 新規作成予定');
     }
 
-    // -------- DRY RUN ガード --------
+    // -------- 適用プラン --------
     header('適用プラン');
-    console.log('1. primaryCategory:', curCatId, '→', PRIMARY_CATEGORY_ID);
-    console.log('2. AppStoreReviewDetail を以下で更新:');
+    console.log('AppStoreReviewDetail を以下で更新:');
     console.log('   demoAccountName     :', REVIEW_INFO.demoAccountName);
     console.log('   demoAccountPassword :', REVIEW_INFO.demoAccountPassword);
     console.log('   demoAccountRequired :', REVIEW_INFO.demoAccountRequired);
@@ -196,15 +162,7 @@ async function updateReviewDetail(detailId, attrs) {
     }
 
     // -------- 実書込 --------
-    header('Step 1: primaryCategory を PATCH');
-    if (curCatId === PRIMARY_CATEGORY_ID) {
-      console.log('既に SOCIAL_NETWORKING。skip。');
-    } else {
-      await setPrimaryCategory(appInfo.id, PRIMARY_CATEGORY_ID);
-      console.log(`✓ ${curCatId} → ${PRIMARY_CATEGORY_ID}`);
-    }
-
-    header('Step 2: AppStoreReviewDetail を保存');
+    header('AppStoreReviewDetail を保存');
     let updated;
     if (detail) {
       updated = await updateReviewDetail(detail.id, REVIEW_INFO);
@@ -215,12 +173,7 @@ async function updateReviewDetail(detailId, attrs) {
     }
 
     // -------- 確認 dump --------
-    header('Step 3: 現在のバージョン状態を確認');
-    const verifyCat = await client.get(
-      `/appInfos/${appInfo.id}/relationships/primaryCategory`,
-    );
-    console.log('verified primaryCategory:', verifyCat?.data?.id ?? '(unset)');
-
+    header('確認: 書込後の値を再取得');
     const verifyDetail = await getReviewDetail(version.id);
     const va = verifyDetail?.data?.attributes ?? {};
     console.log('verified demoAccountName     :', va.demoAccountName ?? '-');
@@ -233,7 +186,7 @@ async function updateReviewDetail(detailId, attrs) {
       'verified notes (head)        :',
       vnotes.slice(0, 80) + (vnotes.length > 80 ? '…' : ''),
     );
-    console.log('\nApp version :', vAttrs.versionString);
+    console.log('\nApp version  :', vAttrs.versionString);
     console.log('Version state:', vAttrs.appVersionState);
   } catch (e) {
     console.error('\n[fatal]', e.message);
