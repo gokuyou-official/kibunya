@@ -82,7 +82,19 @@ export default function NotificationCard({ notification, onReact }: Props) {
         reacted && styles.cardDone,
       ]}
     >
-      {unread && <View style={styles.bar} />}
+      {/*
+        左端のカラーバー (幅 4px) で種類を視覚的に判別する。
+        - kibun (受信した気分 / 誘われた側): 朱 (shu)
+        - reaction (自分への「かー」返答):    金 (yamabuki)
+        unread 状態に関わらず常時表示。未読 highlight は cardUnread の
+        背景色で別途表現する。
+      */}
+      <View
+        style={[
+          styles.bar,
+          { backgroundColor: isReaction ? colors.yamabuki : colors.shu },
+        ]}
+      />
       <View style={styles.emojiWrap}>
         <Text style={styles.emojiText}>
           {isReaction || reacted ? activity.matchEmoji : activity.waitEmoji}
@@ -148,8 +160,8 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    width: 3,
-    backgroundColor: colors.yamabuki,
+    width: 4,
+    // backgroundColor は inline で type に応じて上書きする
   },
   emojiWrap: {
     width: 44,

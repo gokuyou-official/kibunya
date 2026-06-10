@@ -7,6 +7,7 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  getDocs,
   updateDoc,
   addDoc,
   serverTimestamp,
@@ -174,4 +175,49 @@ export function useNotifications(
     markAllAsRead,
     reactToNotification,
   };
+}
+
+// 7 日以上前の自分宛アラートを削除する一回限りの掃除関数。
+// アプリ起動時に App.tsx の Root から uid 切替時に呼ぶ前提。
+// React コンポーネントの外でも使えるよう hook ではなく純関数として export。
+//
+// ⚠️ 設計メモ:
+//   - where('receiverId', '==', uid) は single-field index (auto) で動く。
+//     createdAt の比較を Firestore query 側でやると composite index が
+//     必要になるため JS 側で filter する。
+//   - Firestore rule で notifications の delete は sender/receiver 双方が
+//     可能。本関数は受信側分だけ掃除する (送信側分は相手の起動で消える)。
+//   - 失敗してもサイレント。アプリ本来のフローは止めない。
+export async function cleanupOldNotifications(
+  uid: string | undefined,
+  olderThanDays = 7,
+): Promise<number> {
+  if (!uid) return 0;
+  try {
+    const cutoffMs = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+    const q = query(
+      collection(db, 'notifications'),
+      where('receiverId', '==', uid),
+    );
+    const snap = await getDocs(q);
+    const targets = snap.docs.filter((d) => {
+      const ts = d.data().createdAt;
+      const ms = ts?.toMillis?.() ?? 0;
+      // ms===0 (server timestamp 未確定) は安全側で対象外
+      return ms > 0 && ms < cutoffMs;
+    });
+    if (targets.length === 0) return 0;
+    const batch = writeBatch(db);
+    for (const d of targets) {
+      batch.delete(d.ref);
+    }
+    await batch.commit();
+    // eslint-disable-next-line no-console
+    console.log(`[cleanup] deleted ${targets.length} old notifications (>${olderThanDays}d)`);
+    return targets.length;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('cleanupOldNotifications error', e);
+    return 0;
+  }
 }

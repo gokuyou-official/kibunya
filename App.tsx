@@ -1,4 +1,4 @@
-// force rebuild 2026-06-09
+// force rebuild 2026-06-10
 // キブンヤ エントリーポイント(v2: 興味ベースゲート + プロフィールタブ)
 import 'react-native-gesture-handler';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,7 +17,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { colors } from './src/config/colors';
 import { db, initError as firebaseInitError } from './src/config/firebase';
 import { useAuth } from './src/hooks/useAuth';
-import { useNotifications } from './src/hooks/useNotifications';
+import { useNotifications, cleanupOldNotifications } from './src/hooks/useNotifications';
 import { useProfile } from './src/hooks/useProfile';
 import { useMatchEvents } from './src/hooks/useMatchEvents';
 import {
@@ -226,6 +226,10 @@ function Root() {
 
   useEffect(() => {
     if (!currentUser) return;
+
+    // 7 日以上前の自分宛アラートを一括削除 (起動 / ログイン直後に 1 回)。
+    // 失敗してもサイレント (関数内で console.warn のみ、本フローは止めない)。
+    cleanupOldNotifications(currentUser.uid);
 
     registerForPushNotifications(currentUser.uid);
 
