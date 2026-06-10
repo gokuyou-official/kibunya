@@ -104,6 +104,17 @@ async function addVersionToSubmission(submissionId, versionId) {
   });
 }
 
+// reviewSubmission 配下の items を取得。Step 5 の事後検証で必須。
+// include=appStoreVersion で各 item の relationships.appStoreVersion.data
+// (target version の id) を確実に取れるようにする。
+async function getSubmissionItems(submissionId) {
+  const resp = await client.get(
+    `/reviewSubmissions/${submissionId}/items`,
+    { include: 'appStoreVersion', limit: 25 },
+  );
+  return resp?.data ?? [];
+}
+
 async function submitReview(submissionId) {
   return client.patch(`/reviewSubmissions/${submissionId}`, {
     data: {
@@ -239,22 +250,61 @@ async function submitReview(submissionId) {
     }
 
     // -------- (5) Item 追加 --------
+    // ⚠️ 旧実装は 409/422 を「既に追加済」とみなして silent skip していたが、
+    // 実際は別原因 (version 紐付け不正 / state 不適合 等) で失敗していても
+    // skip され、Step 6 で 409 ENTITY_ERROR.RELATIONSHIP.REQUIRED
+    // ("appStoreVersionForReview must be set") の遠隔エラーになっていた。
+    //
+    // 新実装は:
+    //   1. POST item を実行。成功時はレスポンス全体をログ。
+    //   2. エラー時は status + body を完全に出力し、throw せず続行する
+    //      (既に item が登録済の benign ケースを排除しないため)。
+    //   3. 直後に GET items?include=appStoreVersion で再検証。target
+    //      version の id を含む item が存在しなければ throw して PATCH
+    //      submitted=true に絶対に進ませない。
     header('Exec Step 3: reviewSubmissionItem を作成 (version を紐付け)');
+    let itemPostError = null;
     try {
-      const item = await addVersionToSubmission(submission.id, TARGET_VERSION_ID);
-      console.log(`✓ created reviewSubmissionItem ${item?.data?.id}`);
+      const itemResp = await addVersionToSubmission(
+        submission.id,
+        TARGET_VERSION_ID,
+      );
+      console.log('POST /reviewSubmissionItems response (head 1KB):');
+      console.log(JSON.stringify(itemResp, null, 2).slice(0, 1000));
+      console.log(`✓ created reviewSubmissionItem ${itemResp?.data?.id}`);
     } catch (e) {
-      // 既に同 version が item に入っている場合は 409 や 422。続行する。
-      if (e.status === 409 || e.status === 422) {
-        console.log(`(skip) item 追加で ${e.status} → 既に追加済の可能性、続行`);
-      } else {
-        throw e;
-      }
+      itemPostError = e;
+      console.log(`POST /reviewSubmissionItems failed (status=${e.status}):`);
+      console.log(String(e.body ?? '').slice(0, 2000));
+      console.log('continuing to verification step...');
     }
+
+    // -------- (5.5) Item 検証 --------
+    header('Exec Step 3.5: items 検証 (Step 6 に進むための gate)');
+    const items = await getSubmissionItems(submission.id);
+    console.log(`items count: ${items.length}`);
+    for (const it of items) {
+      const verId = it.relationships?.appStoreVersion?.data?.id ?? '(none)';
+      console.log(`  item ${it.id} → appStoreVersion ${verId}`);
+    }
+    const includesTarget = items.some(
+      (it) => it.relationships?.appStoreVersion?.data?.id === TARGET_VERSION_ID,
+    );
+    if (!includesTarget) {
+      const why = itemPostError
+        ? `(POST item が status=${itemPostError.status} で失敗していた)`
+        : '(POST item は成功したように見えたが verifying GET に target version が含まれていない)';
+      throw new Error(
+        `submission ${submission.id} に target version ${TARGET_VERSION_ID} の item が無い。${why} submitted=true は実行しません。`,
+      );
+    }
+    console.log(`✓ target version ${TARGET_VERSION_ID} が items に含まれる`);
 
     // -------- (6) Submit --------
     header('Exec Step 4: PATCH submitted=true で審査提出');
     const submitted = await submitReview(submission.id);
+    console.log('PATCH /reviewSubmissions response (head 1KB):');
+    console.log(JSON.stringify(submitted, null, 2).slice(0, 1000));
     const sa = submitted?.data?.attributes ?? {};
     console.log('✓ submitted');
     console.log('  state         :', sa.state ?? '-');
