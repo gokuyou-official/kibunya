@@ -161,7 +161,7 @@ async function createReviewSubmission() {
 }
 
 async function addVersionToSubmission(submissionId, versionId) {
-  return client.post('/reviewSubmissionItems', {
+  const body = {
     data: {
       type: 'reviewSubmissionItems',
       relationships: {
@@ -173,7 +173,11 @@ async function addVersionToSubmission(submissionId, versionId) {
         },
       },
     },
-  });
+  };
+  // 送信前に request body を全文ログ (Apple 側の rejection 原因解析のため)
+  console.log('POST /reviewSubmissionItems request body:');
+  console.log(JSON.stringify(body, null, 2));
+  return client.post('/reviewSubmissionItems', body);
 }
 
 // reviewSubmission 配下の items を取得。Step 5 の事後検証で必須。
@@ -446,13 +450,26 @@ async function submitReview(submissionId) {
         submission.id,
         TARGET_VERSION_ID,
       );
-      console.log('POST /reviewSubmissionItems response (head 1KB):');
-      console.log(JSON.stringify(itemResp, null, 2).slice(0, 1000));
+      // 成功時もレスポンス全文をログ (id 確認 + 後続検証のため)
+      console.log('POST /reviewSubmissionItems response (full):');
+      console.log(JSON.stringify(itemResp, null, 2));
       console.log(`✓ created reviewSubmissionItem ${itemResp?.data?.id}`);
     } catch (e) {
       itemPostError = e;
-      console.log(`POST /reviewSubmissionItems failed (status=${e.status}):`);
-      console.log(String(e.body ?? '').slice(0, 2000));
+      // 失敗時は status / body / parsed JSON / 完全 message を全部出す。
+      // 旧実装は `e.body?.slice(0, 2000)` だったが、e.body が空文字や
+      // 短文だと「status=409 だけ表示」に見えていた。
+      console.log('POST /reviewSubmissionItems failed:');
+      console.log(`  status       : ${e.status ?? '(none)'}`);
+      console.log(`  message      : ${e.message ?? '(none)'}`);
+      console.log('  body (raw)   :');
+      console.log(e.body ? String(e.body) : '(empty)');
+      if (e.json) {
+        console.log('  body (parsed JSON):');
+        console.log(JSON.stringify(e.json, null, 2));
+      } else if (e.body) {
+        console.log('  body (parsed JSON): (parse 失敗)');
+      }
       console.log('continuing to verification step...');
     }
 
