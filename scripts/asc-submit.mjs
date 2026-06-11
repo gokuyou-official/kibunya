@@ -17,6 +17,7 @@
 //   ASC_VERSION_ID   (default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef')
 //                    対象の appStoreVersion ID。未指定なら editable な
 //                    最新を自動探索する。
+//   ASC_BASE_TERRITORY (default: 'JPN') 価格スケジュールの baseTerritory
 //   DRY_RUN          (default: "true")
 import { buildAscClient, fmtDate } from './lib/asc-auth.mjs';
 
@@ -25,6 +26,8 @@ const DRY_RUN = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
 const TARGET_VERSION_ID =
   (process.env.ASC_VERSION_ID ?? '').trim() ||
   '0a4eb599-86f1-4517-a2c4-8ed22281c5ef'; // 既存の editable version
+const BASE_TERRITORY =
+  (process.env.ASC_BASE_TERRITORY ?? '').trim() || 'JPN';
 
 if (!ASC_APP_ID) {
   console.error('[error] ASC_APP_ID が未設定です');
@@ -35,6 +38,75 @@ const client = buildAscClient();
 
 function header(s) {
   console.log('\n=== ' + s + ' ===');
+}
+
+// ==============================
+// 価格スケジュール関連 (Pricing v3 = appPricePoint ベース)
+// ==============================
+//
+// Apple は 2023 末で priceTier (= 旧 tier 番号、'0' が free) を廃止し
+// appPricePoint (= app × territory × tier の固有 ID) に移行。
+// 本スクリプトは新方式で書く。
+//
+// 流れ:
+//   1) GET /v1/apps/{id}/appPriceSchedule で既存スケジュール確認
+//   2) 未設定なら GET /v1/apps/{id}/appPricePoints?filter[territory]=JPN
+//      から customerPrice='0' (= 無料) の appPricePoint を取得
+//   3) POST /v1/appPriceSchedules で manualPrices に上記 pricePoint を
+//      参照する appPrices を含める
+
+async function getCurrentPriceSchedule() {
+  try {
+    return await client.get(`/apps/${ASC_APP_ID}/appPriceSchedule`);
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
+async function findFreeAppPricePoint(territoryId) {
+  // app に紐付く appPricePoints から territory で filter。
+  // customerPrice は文字列 ('0' / '120' 等) で返る。
+  const resp = await client.get(`/apps/${ASC_APP_ID}/appPricePoints`, {
+    'filter[territory]': territoryId,
+    limit: 200,
+  });
+  const points = resp?.data ?? [];
+  return points.find((p) => p.attributes?.customerPrice === '0') ?? null;
+}
+
+async function createFreePriceSchedule(territoryId, pricePointId) {
+  // included の placeholder id は POST body 内でのみ意味を持つ参照キー。
+  // Apple は POST 完了後に real な appPrices id を返す。
+  const placeholder = 'free-price-1';
+  return client.post('/appPriceSchedules', {
+    data: {
+      type: 'appPriceSchedules',
+      relationships: {
+        app: { data: { type: 'apps', id: ASC_APP_ID } },
+        baseTerritory: {
+          data: { type: 'territories', id: territoryId },
+        },
+        manualPrices: {
+          data: [{ type: 'appPrices', id: placeholder }],
+        },
+      },
+    },
+    included: [
+      {
+        type: 'appPrices',
+        id: placeholder,
+        attributes: {
+          startDate: null, // 即時適用
+        },
+        relationships: {
+          appPricePoint: {
+            data: { type: 'appPricePoints', id: pricePointId },
+          },
+        },
+      },
+    ],
+  });
 }
 
 async function listRecentBuilds() {
@@ -129,7 +201,42 @@ async function submitReview(submissionId) {
   try {
     console.log('ASC_APP_ID        :', ASC_APP_ID);
     console.log('TARGET_VERSION_ID :', TARGET_VERSION_ID);
+    console.log('BASE_TERRITORY    :', BASE_TERRITORY);
     console.log('DRY_RUN           :', DRY_RUN);
+
+    // -------- (0) 価格スケジュール確認 --------
+    header('Step 0: 価格スケジュール (現状確認)');
+    const schedResp = await getCurrentPriceSchedule();
+    const sched = schedResp?.data ?? null;
+    let freePricePoint = null;
+    let needsPriceSetup = false;
+    if (sched) {
+      // 既存スケジュール有り。relationships から baseTerritory 等を表示。
+      // manualPrices の中身までは別 GET が必要なのでここでは id だけ。
+      console.log('appPriceSchedule.id :', sched.id);
+      const baseTerrRef =
+        sched.relationships?.baseTerritory?.data?.id ?? '(none)';
+      console.log('baseTerritory       :', baseTerrRef);
+      const mpRefs = sched.relationships?.manualPrices?.data ?? [];
+      console.log('manualPrices count  :', mpRefs.length);
+      console.log('→ 既設定。設定 step は skip。');
+    } else {
+      console.log('(価格スケジュール未設定)');
+      // free price point を探索しておく (DRY_RUN でもプラン表示で使う)
+      freePricePoint = await findFreeAppPricePoint(BASE_TERRITORY);
+      if (freePricePoint) {
+        console.log(
+          `free appPricePoint (${BASE_TERRITORY}): id=${freePricePoint.id}` +
+            `  customerPrice=${freePricePoint.attributes?.customerPrice ?? '-'}`,
+        );
+        needsPriceSetup = true;
+      } else {
+        console.log(
+          `[warn] ${BASE_TERRITORY} 領域の free (customerPrice='0') appPricePoint が見つからない。` +
+            ' 価格設定は skip し、ASC Console で手動対応推奨。',
+        );
+      }
+    }
 
     // -------- (1) Build 一覧 --------
     header('Step 1: ビルド一覧 (最新 20 件)');
@@ -203,6 +310,15 @@ async function submitReview(submissionId) {
 
     // -------- 適用プラン --------
     header('適用プラン');
+    if (needsPriceSetup && freePricePoint) {
+      console.log(
+        `0. 価格スケジュール: POST appPriceSchedules (free, baseTerritory=${BASE_TERRITORY})`,
+      );
+    } else if (sched) {
+      console.log('0. 価格スケジュール: skip (既設定)');
+    } else {
+      console.log('0. 価格スケジュール: skip (free price point 未発見)');
+    }
     if (needsAttach) {
       console.log(
         `1. attach build:  ${
@@ -226,6 +342,32 @@ async function submitReview(submissionId) {
         '実行する場合は workflow_dispatch で dry_run=false を選んで再実行してください。',
       );
       return;
+    }
+
+    // -------- (Exec 0) 価格スケジュール設定 --------
+    header('Exec Step 0: 価格スケジュール (未設定なら free を設定)');
+    if (sched) {
+      console.log('skip (既設定)');
+    } else if (!freePricePoint) {
+      console.log('skip (free price point 未発見、Console で手動対応推奨)');
+    } else {
+      try {
+        const created = await createFreePriceSchedule(
+          BASE_TERRITORY,
+          freePricePoint.id,
+        );
+        console.log('POST /appPriceSchedules response (head 1KB):');
+        console.log(JSON.stringify(created, null, 2).slice(0, 1000));
+        console.log(
+          `✓ created appPriceSchedule ${created?.data?.id} (free / ${BASE_TERRITORY})`,
+        );
+      } catch (e) {
+        console.log(`POST /appPriceSchedules failed (status=${e.status}):`);
+        console.log(String(e.body ?? '').slice(0, 2000));
+        throw new Error(
+          `価格スケジュール設定に失敗。次の build 紐付け / 審査提出は実行しません: ${e.message}`,
+        );
+      }
     }
 
     // -------- (3) Build 紐付け --------

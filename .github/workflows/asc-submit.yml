@@ -21,6 +21,11 @@ on:
         required: false
         default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef'
         type: string
+      base_territory:
+        description: '価格スケジュールの baseTerritory (ISO 3-letter)'
+        required: false
+        default: 'JPN'
+        type: string
 
 jobs:
   submit:
@@ -61,6 +66,7 @@ jobs:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_APP_ID: '6766822899'
           ASC_VERSION_ID: ${{ inputs.version_id }}
+          ASC_BASE_TERRITORY: ${{ inputs.base_territory }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
@@ -69,6 +75,7 @@ jobs:
             echo ""
             echo "- dry_run: \`${DRY_RUN}\`"
             echo "- version_id: \`${ASC_VERSION_ID:-(default)}\`"
+            echo "- base_territory: \`${ASC_BASE_TERRITORY}\`"
             echo ""
             echo '```'
             node scripts/asc-submit.mjs
