@@ -443,6 +443,45 @@ async function submitReview(submissionId) {
     //   3. 直後に GET items?include=appStoreVersion で再検証。target
     //      version の id を含む item が存在しなければ throw して PATCH
     //      submitted=true に絶対に進ませない。
+    // --- Pre-flight: POST 前に両端の state を必ず確認 ---
+    // 旧実装で 409 が続いていた原因切り分けのため、Apple API に POST する
+    // 直前に Apple 側の真実値を GET して両者の state を表示し、ガード条件を
+    // 満たさなければここで明示的に throw する (誤った状態で POST して
+    // 不可解な 409 を増やさないため)。
+    header('Pre-flight: appStoreVersion / reviewSubmission の state 確認');
+    const versionResp = await client.get(
+      `/appStoreVersions/${TARGET_VERSION_ID}`,
+    );
+    const vAttrs = versionResp?.data?.attributes ?? {};
+    console.log(`appStoreVersion ${TARGET_VERSION_ID}`);
+    console.log(`  appVersionState : ${vAttrs.appVersionState ?? '(none)'}`);
+    console.log(`  versionString   : ${vAttrs.versionString ?? '-'}`);
+    console.log(`  platform        : ${vAttrs.platform ?? '-'}`);
+
+    const subResp = await client.get(`/reviewSubmissions/${submission.id}`);
+    const subAttrs = subResp?.data?.attributes ?? {};
+    console.log(`reviewSubmission ${submission.id}`);
+    console.log(`  state          : ${subAttrs.state ?? '(none)'}`);
+    console.log(`  platform       : ${subAttrs.platform ?? '-'}`);
+    console.log(`  submittedDate  : ${fmtDate(subAttrs.submittedDate)}`);
+
+    if (vAttrs.appVersionState !== 'PREPARE_FOR_SUBMISSION') {
+      throw new Error(
+        `appStoreVersion ${TARGET_VERSION_ID} の appVersionState が ` +
+          `${vAttrs.appVersionState} で PREPARE_FOR_SUBMISSION ではない。` +
+          ' POST /reviewSubmissionItems を実行せず停止。',
+      );
+    }
+    const acceptableSubStates = ['READY_FOR_REVIEW', 'WAITING_FOR_REVIEW'];
+    if (!acceptableSubStates.includes(subAttrs.state)) {
+      throw new Error(
+        `reviewSubmission ${submission.id} の state が ${subAttrs.state}。` +
+          ` ${acceptableSubStates.join(' / ')} のいずれかでないと item 追加不可。` +
+          ' POST /reviewSubmissionItems を実行せず停止。',
+      );
+    }
+    console.log('✓ 両端の state チェック通過');
+
     header('Exec Step 3: reviewSubmissionItem を作成 (version を紐付け)');
     let itemPostError = null;
     try {
