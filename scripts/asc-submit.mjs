@@ -1,33 +1,34 @@
-// App Store Connect 審査提出スクリプト
+// App Store Connect 審査提出スクリプト (clean-slate 版)
 //
-// 流れ:
-//   (1) /v1/builds?filter[app]=<id>&sort=-uploadedDate で最新ビルド一覧取得
-//   (2) /v1/appStoreVersions/<verId>/relationships/build で現在紐付ビルド確認
-//   (3) PATCH /v1/appStoreVersions/<verId>/relationships/build で
-//       最新の VALID ビルド (processingState='VALID') を version に紐付け
-//   (4) POST /v1/reviewSubmissions で新規 reviewSubmission 作成
-//       (app との relationship, platform: 'IOS')
-//   (5) POST /v1/reviewSubmissionItems で version を submission に紐付け
-//   (6) PATCH /v1/reviewSubmissions/<subId> で submitted: true を立てて提出
+// 過去の試行錯誤で reviewSubmissions の下書きが複数残った状態 +
+// 不可解な 409 が続いていた問題への対処。常に既存 reviewSubmissions を
+// 全削除してまっさらにし、legacy submission API → fallback で
+// reviewSubmissions API を順に試す。
+//
+// ステップ:
+//   1. 既存 reviewSubmissions (app filter + IOS) を全 DELETE
+//   2. 最新 VALID build を target version に PATCH で紐付け
+//   3. POST /v1/appStoreVersionSubmissions (legacy) を試す
+//      - 2xx → 完了
+//      - 4xx/5xx → fallback (reviewSubmissions フロー):
+//        a. POST /v1/reviewSubmissions
+//        b. POST /v1/reviewSubmissionItems
+//        c. PATCH /v1/reviewSubmissions/{id} { submitted: true }
+//
+// 全 API call で request body + response body / error body を完全ログ。
+// dry_run は廃止 (旧版にあった分岐は撤去)。常に実行する。
 //
 // 必須 env:
 //   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY (or ASC_P8_KEY_PATH)
 //   ASC_APP_ID
 // 任意 env:
-//   ASC_VERSION_ID   (default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef')
-//                    対象の appStoreVersion ID。未指定なら editable な
-//                    最新を自動探索する。
-//   ASC_BASE_TERRITORY (default: 'JPN') 価格スケジュールの baseTerritory
-//   DRY_RUN          (default: "true")
+//   ASC_VERSION_ID  (default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef')
 import { buildAscClient, fmtDate } from './lib/asc-auth.mjs';
 
 const { ASC_APP_ID } = process.env;
-const DRY_RUN = (process.env.DRY_RUN ?? 'true').toLowerCase() !== 'false';
 const TARGET_VERSION_ID =
   (process.env.ASC_VERSION_ID ?? '').trim() ||
-  '0a4eb599-86f1-4517-a2c4-8ed22281c5ef'; // 既存の editable version
-const BASE_TERRITORY =
-  (process.env.ASC_BASE_TERRITORY ?? '').trim() || 'JPN';
+  '0a4eb599-86f1-4517-a2c4-8ed22281c5ef';
 
 if (!ASC_APP_ID) {
   console.error('[error] ASC_APP_ID が未設定です');
@@ -40,215 +41,92 @@ function header(s) {
   console.log('\n=== ' + s + ' ===');
 }
 
-// ==============================
-// 価格スケジュール関連 (Pricing v3 = appPricePoint ベース)
-// ==============================
-//
-// Apple は 2023 末で priceTier (= 旧 tier 番号、'0' が free) を廃止し
-// appPricePoint (= app × territory × tier の固有 ID) に移行。
-// 本スクリプトは新方式で書く。
-//
-// 流れ:
-//   1) GET /v1/apps/{id}/appPriceSchedule で既存スケジュール確認
-//   2) 未設定なら GET /v1/apps/{id}/appPricePoints?filter[territory]=JPN
-//      から customerPrice='0' (= 無料) の appPricePoint を取得
-//   3) POST /v1/appPriceSchedules で manualPrices に上記 pricePoint を
-//      参照する appPrices を含める
+function logBody(label, value) {
+  console.log(label + ':');
+  if (value === undefined || value === null) {
+    console.log('(none)');
+  } else if (typeof value === 'string') {
+    console.log(value);
+  } else {
+    console.log(JSON.stringify(value, null, 2));
+  }
+}
 
-async function getCurrentPriceSchedule() {
+// API call ラッパー: request body / response body / error body を全文ログする。
+async function call(method, path, body) {
+  console.log(`\n→ ${method} ${path}`);
+  if (body !== undefined) logBody('request body', body);
   try {
-    return await client.get(`/apps/${ASC_APP_ID}/appPriceSchedule`);
+    let resp;
+    if (method === 'GET') {
+      resp = await client.get(path, body);
+    } else if (method === 'POST') {
+      resp = await client.post(path, body);
+    } else if (method === 'PATCH') {
+      resp = await client.patch(path, body);
+    } else if (method === 'DELETE') {
+      resp = await client.delete(path);
+    } else {
+      throw new Error(`unsupported method: ${method}`);
+    }
+    logBody('response', resp);
+    return resp;
   } catch (e) {
-    if (e.status === 404) return null;
+    console.log(`✗ ${method} ${path} failed (status=${e.status ?? '(none)'})`);
+    console.log('  message:', e.message);
+    logBody('  body (raw)', e.body || '(empty)');
+    if (e.json) logBody('  body (parsed)', e.json);
     throw e;
   }
 }
 
-async function findFreeAppPricePoint(territoryId) {
-  // app に紐付く appPricePoints から territory で filter。
-  // customerPrice は文字列 ('0' / '120' 等) で返る。
-  const resp = await client.get(`/apps/${ASC_APP_ID}/appPricePoints`, {
-    'filter[territory]': territoryId,
-    limit: 200,
-  });
-  const points = resp?.data ?? [];
-  return points.find((p) => p.attributes?.customerPrice === '0') ?? null;
-}
-
-async function createFreePriceSchedule(territoryId, pricePointId) {
-  // included の placeholder id は POST body 内でのみ意味を持つ参照キー。
-  // Apple は POST 完了後に real な appPrices id を返す。
-  const placeholder = 'free-price-1';
-  return client.post('/appPriceSchedules', {
-    data: {
-      type: 'appPriceSchedules',
-      relationships: {
-        app: { data: { type: 'apps', id: ASC_APP_ID } },
-        baseTerritory: {
-          data: { type: 'territories', id: territoryId },
-        },
-        manualPrices: {
-          data: [{ type: 'appPrices', id: placeholder }],
-        },
-      },
-    },
-    included: [
-      {
-        type: 'appPrices',
-        id: placeholder,
-        attributes: {
-          startDate: null, // 即時適用
-        },
-        relationships: {
-          appPricePoint: {
-            data: { type: 'appPricePoints', id: pricePointId },
-          },
-        },
-      },
-    ],
-  });
-}
-
-async function listRecentBuilds() {
-  const resp = await client.get('/builds', {
-    'filter[app]': ASC_APP_ID,
-    sort: '-uploadedDate',
-    limit: 20,
-  });
-  return resp?.data ?? [];
-}
-
-async function getAttachedBuild(versionId) {
-  try {
-    const resp = await client.get(
-      `/appStoreVersions/${versionId}/relationships/build`,
-    );
-    return resp?.data ?? null; // { type, id } or null
-  } catch (e) {
-    if (e.status === 404) return null;
-    throw e;
-  }
-}
-
-async function attachBuild(versionId, buildId) {
-  return client.patch(`/appStoreVersions/${versionId}/relationships/build`, {
-    data: { type: 'builds', id: buildId },
-  });
-}
-
-async function listOpenReviewSubmissions() {
-  // submitted 前 (COMPLETING / READY_FOR_REVIEW) のものを探す。
-  // ASC API は state filter を組合せ複数受けるので、新しめのものから順に
-  // 取得して呼び出し側で state を見る。
-  const resp = await client.get('/reviewSubmissions', {
-    'filter[app]': ASC_APP_ID,
-    'filter[platform]': 'IOS',
-    limit: 10,
-  });
-  return resp?.data ?? [];
-}
-
-async function createReviewSubmission() {
-  return client.post('/reviewSubmissions', {
-    data: {
-      type: 'reviewSubmissions',
-      attributes: { platform: 'IOS' },
-      relationships: {
-        app: { data: { type: 'apps', id: ASC_APP_ID } },
-      },
-    },
-  });
-}
-
-async function addVersionToSubmission(submissionId, versionId) {
-  const body = {
-    data: {
-      type: 'reviewSubmissionItems',
-      relationships: {
-        reviewSubmission: {
-          data: { type: 'reviewSubmissions', id: submissionId },
-        },
-        appStoreVersion: {
-          data: { type: 'appStoreVersions', id: versionId },
-        },
-      },
-    },
-  };
-  // 送信前に request body を全文ログ (Apple 側の rejection 原因解析のため)
-  console.log('POST /reviewSubmissionItems request body:');
-  console.log(JSON.stringify(body, null, 2));
-  return client.post('/reviewSubmissionItems', body);
-}
-
-// reviewSubmission 配下の items を取得。Step 5 の事後検証で必須。
-// include=appStoreVersion で各 item の relationships.appStoreVersion.data
-// (target version の id) を確実に取れるようにする。
-async function getSubmissionItems(submissionId) {
-  const resp = await client.get(
-    `/reviewSubmissions/${submissionId}/items`,
-    { include: 'appStoreVersion', limit: 25 },
-  );
-  return resp?.data ?? [];
-}
-
-async function submitReview(submissionId) {
-  return client.patch(`/reviewSubmissions/${submissionId}`, {
-    data: {
-      type: 'reviewSubmissions',
-      id: submissionId,
-      attributes: { submitted: true },
-    },
-  });
-}
-
+// ---------- main ----------
 (async () => {
   try {
     console.log('ASC_APP_ID        :', ASC_APP_ID);
     console.log('TARGET_VERSION_ID :', TARGET_VERSION_ID);
-    console.log('BASE_TERRITORY    :', BASE_TERRITORY);
-    console.log('DRY_RUN           :', DRY_RUN);
 
-    // -------- (0) 価格スケジュール確認 --------
-    header('Step 0: 価格スケジュール (現状確認)');
-    const schedResp = await getCurrentPriceSchedule();
-    const sched = schedResp?.data ?? null;
-    let freePricePoint = null;
-    let needsPriceSetup = false;
-    if (sched) {
-      // 既存スケジュール有り。relationships から baseTerritory 等を表示。
-      // manualPrices の中身までは別 GET が必要なのでここでは id だけ。
-      console.log('appPriceSchedule.id :', sched.id);
-      const baseTerrRef =
-        sched.relationships?.baseTerritory?.data?.id ?? '(none)';
-      console.log('baseTerritory       :', baseTerrRef);
-      const mpRefs = sched.relationships?.manualPrices?.data ?? [];
-      console.log('manualPrices count  :', mpRefs.length);
-      console.log('→ 既設定。設定 step は skip。');
-    } else {
-      console.log('(価格スケジュール未設定)');
-      // free price point を探索しておく (DRY_RUN でもプラン表示で使う)
-      freePricePoint = await findFreeAppPricePoint(BASE_TERRITORY);
-      if (freePricePoint) {
+    // -------------------------------------------------------------------
+    // Step 1: 既存 reviewSubmissions を全 DELETE
+    // -------------------------------------------------------------------
+    header('Step 1: 既存 reviewSubmissions (app + IOS) を全削除');
+    const subList = await call(
+      'GET',
+      '/reviewSubmissions',
+      { 'filter[app]': ASC_APP_ID, 'filter[platform]': 'IOS', limit: 50 },
+    );
+    const existing = subList?.data ?? [];
+    console.log(`\n対象 ${existing.length} 件の reviewSubmission を順次 DELETE する`);
+    for (const s of existing) {
+      const id = s.id;
+      const state = s.attributes?.state ?? '-';
+      try {
+        await call('DELETE', `/reviewSubmissions/${id}`);
+        console.log(`✓ deleted ${id} (was state=${state})`);
+      } catch (e) {
+        // 既に submitted されたもの (state=WAITING_FOR_REVIEW 等) は DELETE
+        // 不可で 409 を返す可能性が高い。サイレント失敗で続行 (削除できない
+        // ものは触らず、新規 submission で上書きする方針)。
         console.log(
-          `free appPricePoint (${BASE_TERRITORY}): id=${freePricePoint.id}` +
-            `  customerPrice=${freePricePoint.attributes?.customerPrice ?? '-'}`,
-        );
-        needsPriceSetup = true;
-      } else {
-        console.log(
-          `[warn] ${BASE_TERRITORY} 領域の free (customerPrice='0') appPricePoint が見つからない。` +
-            ' 価格設定は skip し、ASC Console で手動対応推奨。',
+          `[warn] DELETE ${id} 失敗 (state=${state}, status=${e.status})。続行。`,
         );
       }
     }
 
-    // -------- (1) Build 一覧 --------
-    header('Step 1: ビルド一覧 (最新 20 件)');
-    const builds = await listRecentBuilds();
+    // -------------------------------------------------------------------
+    // Step 2: 最新 VALID build を target version に紐付け
+    // -------------------------------------------------------------------
+    header('Step 2: 最新 VALID ビルドを取得 → version に紐付け');
+    const buildsResp = await call('GET', '/builds', {
+      'filter[app]': ASC_APP_ID,
+      sort: '-uploadedDate',
+      limit: 20,
+    });
+    const builds = buildsResp?.data ?? [];
     if (builds.length === 0) {
-      throw new Error('ビルドが 1 件も見つかりません');
+      throw new Error('ビルドが 1 件もない');
     }
-    console.log(['id (head)', 'version', 'build#', 'state', 'uploaded'].join('\t'));
+    console.log('\n--- builds 一覧 ---');
     for (const b of builds) {
       const a = b.attributes ?? {};
       console.log(
@@ -261,295 +139,162 @@ async function submitReview(submissionId) {
         ].join('\t'),
       );
     }
-
     const latestValid = builds.find(
       (b) => b.attributes?.processingState === 'VALID',
     );
     if (!latestValid) {
-      throw new Error(
-        'VALID 状態のビルドが見つかりません (processing 完了待ち / Invalid の可能性)',
-      );
+      throw new Error('VALID 状態のビルドが無い (processing 中 / Invalid)');
     }
-    console.log(`\n最新 VALID ビルド: ${latestValid.id} (${latestValid.attributes?.version} #${latestValid.attributes?.buildNumber})`);
-
-    // -------- (2) 現在紐付け確認 --------
-    header(`Step 2: version ${TARGET_VERSION_ID.slice(0, 8)}… の現在の紐付ビルド`);
-    const attached = await getAttachedBuild(TARGET_VERSION_ID);
-    if (attached) {
-      console.log(`現在紐付  : ${attached.id}`);
-    } else {
-      console.log('現在紐付  : (未設定)');
-    }
-    const needsAttach = !attached || attached.id !== latestValid.id;
-    console.log(`紐付け要否: ${needsAttach ? '必要' : '不要 (同じビルドを紐付け済)'}`);
-
-    // -------- 既存 reviewSubmissions の確認 --------
-    header('Step 3: 既存 reviewSubmissions (app + IOS) を確認');
-    const openSubs = await listOpenReviewSubmissions();
-    if (openSubs.length === 0) {
-      console.log('(既存なし → 新規作成予定)');
-    } else {
-      console.log(['id (head)', 'state', 'submittedDate', 'platform'].join('\t'));
-      for (const s of openSubs) {
-        const a = s.attributes ?? {};
-        console.log(
-          [
-            s.id.slice(0, 8) + '…',
-            a.state ?? '-',
-            fmtDate(a.submittedDate),
-            a.platform ?? '-',
-          ].join('\t'),
-        );
-      }
-    }
-    // 提出前 (= まだ submitted されていない) の submission を再利用候補とする。
-    // state COMPLETING や READY_FOR_REVIEW は新規アイテム追加可能。
-    // IN_REVIEW / WAITING_FOR_REVIEW などはもう触れない。
-    let reusable = openSubs.find((s) =>
-      ['COMPLETING', 'READY_FOR_REVIEW'].includes(s.attributes?.state),
+    console.log(
+      `\n最新 VALID ビルド: ${latestValid.id} (${latestValid.attributes?.version} #${latestValid.attributes?.buildNumber})`,
     );
-    // 再利用候補が見つかっても items=0 で stuck している場合がある
-    // (過去の失敗回で残った gemini submission)。次の POST item で 409 を
-    // 返し続け、PATCH submitted も "appStoreVersionForReview required" で
-    // 詰まる。事前に items を確認し、空なら DELETE して再生成対象にする。
-    let staleSubmission = null;
-    if (reusable) {
-      const existingItems = await getSubmissionItems(reusable.id);
-      console.log(
-        `再利用候補: ${reusable.id} (state=${reusable.attributes?.state}, items=${existingItems.length})`,
+
+    // 現在の紐付け状況を表示してから PATCH (差分が無くても上書きは無害)。
+    try {
+      await call(
+        'GET',
+        `/appStoreVersions/${TARGET_VERSION_ID}/relationships/build`,
       );
-      if (existingItems.length === 0) {
-        console.log(
-          '  → items=0 で stuck。Exec で DELETE → 新規作成に切替。',
-        );
-        staleSubmission = reusable;
-        reusable = null;
-      }
+    } catch (e) {
+      console.log(`[info] 現在紐付ビルドの GET で status=${e.status}。続行。`);
+    }
+    await call(
+      'PATCH',
+      `/appStoreVersions/${TARGET_VERSION_ID}/relationships/build`,
+      { data: { type: 'builds', id: latestValid.id } },
+    );
+    console.log(`✓ attached build ${latestValid.id} → version ${TARGET_VERSION_ID}`);
+
+    // -------------------------------------------------------------------
+    // Step 3: 審査提出 - まず legacy API を試す
+    // -------------------------------------------------------------------
+    header(
+      'Step 3a: legacy POST /v1/appStoreVersionSubmissions を試行',
+    );
+    let legacyOK = false;
+    try {
+      const legacyResp = await call('POST', '/appStoreVersionSubmissions', {
+        data: {
+          type: 'appStoreVersionSubmissions',
+          relationships: {
+            appStoreVersion: {
+              data: { type: 'appStoreVersions', id: TARGET_VERSION_ID },
+            },
+          },
+        },
+      });
+      console.log(`✓ legacy submission 成功 id=${legacyResp?.data?.id}`);
+      legacyOK = true;
+    } catch (e) {
+      console.log(
+        '[info] legacy submission が失敗 → reviewSubmissions フォールバックへ。',
+      );
     }
 
-    // -------- 適用プラン --------
-    header('適用プラン');
-    if (needsPriceSetup && freePricePoint) {
-      console.log(
-        `0. 価格スケジュール: POST appPriceSchedules (free, baseTerritory=${BASE_TERRITORY})`,
-      );
-    } else if (sched) {
-      console.log('0. 価格スケジュール: skip (既設定)');
-    } else {
-      console.log('0. 価格スケジュール: skip (free price point 未発見)');
-    }
-    if (needsAttach) {
-      console.log(
-        `1. attach build:  ${
-          attached?.id ?? '(なし)'
-        } → ${latestValid.id}`,
-      );
-    } else {
-      console.log('1. attach build:  skip (同じビルド既に紐付け済)');
-    }
-    if (reusable) {
-      console.log(`2. reviewSubmission: 既存 ${reusable.id} を再利用`);
-    } else if (staleSubmission) {
-      console.log(
-        `2. reviewSubmission: DELETE ${staleSubmission.id} (items=0 stuck) → 新規作成`,
-      );
-    } else {
-      console.log('2. reviewSubmission: 新規作成');
-    }
-    console.log(`3. reviewSubmissionItem: version ${TARGET_VERSION_ID.slice(0, 8)}… を追加`);
-    console.log('4. PATCH submitted: true で審査提出');
-
-    if (DRY_RUN) {
-      header('DRY RUN — 書き込みません');
-      console.log(
-        '実行する場合は workflow_dispatch で dry_run=false を選んで再実行してください。',
-      );
+    if (legacyOK) {
+      header('完了 (legacy)');
+      console.log('App Store Connect の Submissions で進捗確認可。');
       return;
     }
 
-    // -------- (Exec 0) 価格スケジュール設定 --------
-    header('Exec Step 0: 価格スケジュール (未設定なら free を設定)');
-    if (sched) {
-      console.log('skip (既設定)');
-    } else if (!freePricePoint) {
-      console.log('skip (free price point 未発見、Console で手動対応推奨)');
-    } else {
-      try {
-        const created = await createFreePriceSchedule(
-          BASE_TERRITORY,
-          freePricePoint.id,
-        );
-        console.log('POST /appPriceSchedules response (head 1KB):');
-        console.log(JSON.stringify(created, null, 2).slice(0, 1000));
-        console.log(
-          `✓ created appPriceSchedule ${created?.data?.id} (free / ${BASE_TERRITORY})`,
-        );
-      } catch (e) {
-        console.log(`POST /appPriceSchedules failed (status=${e.status}):`);
-        console.log(String(e.body ?? '').slice(0, 2000));
-        throw new Error(
-          `価格スケジュール設定に失敗。次の build 紐付け / 審査提出は実行しません: ${e.message}`,
-        );
-      }
+    // -------------------------------------------------------------------
+    // Step 4: フォールバック - 新 reviewSubmissions フロー
+    // -------------------------------------------------------------------
+    header('Step 3b-i: POST /v1/reviewSubmissions (新規作成)');
+    const created = await call('POST', '/reviewSubmissions', {
+      data: {
+        type: 'reviewSubmissions',
+        attributes: { platform: 'IOS' },
+        relationships: {
+          app: { data: { type: 'apps', id: ASC_APP_ID } },
+        },
+      },
+    });
+    const submission = created?.data;
+    if (!submission?.id) {
+      throw new Error('reviewSubmissions POST のレスポンスから id を抽出不能');
     }
+    console.log(`✓ created reviewSubmission ${submission.id}`);
 
-    // -------- (3) Build 紐付け --------
-    header('Exec Step 1: build を version に紐付け');
-    if (needsAttach) {
-      await attachBuild(TARGET_VERSION_ID, latestValid.id);
-      console.log(`✓ attached build ${latestValid.id} → version ${TARGET_VERSION_ID}`);
-    } else {
-      console.log('skip (同じビルド既に紐付け済)');
-    }
-
-    // -------- (4) reviewSubmission 用意 --------
-    header('Exec Step 2: reviewSubmission 用意');
-    let submission;
-    if (reusable) {
-      submission = reusable;
-      console.log(`既存を再利用: ${submission.id}`);
-    } else {
-      // stale (items=0) があれば先に DELETE。同じ App + Platform で複数の
-      // 提出前 submission を保持できない可能性があるため、生成前に掃除する。
-      if (staleSubmission) {
-        try {
-          await client.delete(`/reviewSubmissions/${staleSubmission.id}`);
-          console.log(
-            `✓ deleted stale reviewSubmission ${staleSubmission.id} (items=0)`,
-          );
-        } catch (e) {
-          console.log(
-            `[warn] stale submission ${staleSubmission.id} の DELETE 失敗 (status=${e.status}):`,
-          );
-          console.log(String(e.body ?? '').slice(0, 1500));
-          // 失敗しても新規 POST を試みる (Apple 側の状態次第で通る場合あり)。
-        }
-      }
-      const created = await createReviewSubmission();
-      submission = created?.data;
-      console.log(`✓ created reviewSubmission ${submission.id}`);
-    }
-
-    // -------- (5) Item 追加 --------
-    // ⚠️ 旧実装は 409/422 を「既に追加済」とみなして silent skip していたが、
-    // 実際は別原因 (version 紐付け不正 / state 不適合 等) で失敗していても
-    // skip され、Step 6 で 409 ENTITY_ERROR.RELATIONSHIP.REQUIRED
-    // ("appStoreVersionForReview must be set") の遠隔エラーになっていた。
-    //
-    // 新実装は:
-    //   1. POST item を実行。成功時はレスポンス全体をログ。
-    //   2. エラー時は status + body を完全に出力し、throw せず続行する
-    //      (既に item が登録済の benign ケースを排除しないため)。
-    //   3. 直後に GET items?include=appStoreVersion で再検証。target
-    //      version の id を含む item が存在しなければ throw して PATCH
-    //      submitted=true に絶対に進ませない。
-    // --- Pre-flight: POST 前に両端の state を必ず確認 ---
-    // 旧実装で 409 が続いていた原因切り分けのため、Apple API に POST する
-    // 直前に Apple 側の真実値を GET して両者の state を表示し、ガード条件を
-    // 満たさなければここで明示的に throw する (誤った状態で POST して
-    // 不可解な 409 を増やさないため)。
-    header('Pre-flight: appStoreVersion / reviewSubmission の state 確認');
-    const versionResp = await client.get(
+    // 直前確認: target version と submission の state を Apple から GET。
+    header('Step 3b-ii: 両端の state を確認');
+    const verResp = await call(
+      'GET',
       `/appStoreVersions/${TARGET_VERSION_ID}`,
     );
-    const vAttrs = versionResp?.data?.attributes ?? {};
-    console.log(`appStoreVersion ${TARGET_VERSION_ID}`);
-    console.log(`  appVersionState : ${vAttrs.appVersionState ?? '(none)'}`);
-    console.log(`  versionString   : ${vAttrs.versionString ?? '-'}`);
-    console.log(`  platform        : ${vAttrs.platform ?? '-'}`);
+    const subResp = await call(
+      'GET',
+      `/reviewSubmissions/${submission.id}`,
+    );
+    console.log(
+      '  appVersionState :',
+      verResp?.data?.attributes?.appVersionState ?? '(none)',
+    );
+    console.log(
+      '  submission state:',
+      subResp?.data?.attributes?.state ?? '(none)',
+    );
 
-    const subResp = await client.get(`/reviewSubmissions/${submission.id}`);
-    const subAttrs = subResp?.data?.attributes ?? {};
-    console.log(`reviewSubmission ${submission.id}`);
-    console.log(`  state          : ${subAttrs.state ?? '(none)'}`);
-    console.log(`  platform       : ${subAttrs.platform ?? '-'}`);
-    console.log(`  submittedDate  : ${fmtDate(subAttrs.submittedDate)}`);
-
-    if (vAttrs.appVersionState !== 'PREPARE_FOR_SUBMISSION') {
-      throw new Error(
-        `appStoreVersion ${TARGET_VERSION_ID} の appVersionState が ` +
-          `${vAttrs.appVersionState} で PREPARE_FOR_SUBMISSION ではない。` +
-          ' POST /reviewSubmissionItems を実行せず停止。',
-      );
-    }
-    const acceptableSubStates = ['READY_FOR_REVIEW', 'WAITING_FOR_REVIEW'];
-    if (!acceptableSubStates.includes(subAttrs.state)) {
-      throw new Error(
-        `reviewSubmission ${submission.id} の state が ${subAttrs.state}。` +
-          ` ${acceptableSubStates.join(' / ')} のいずれかでないと item 追加不可。` +
-          ' POST /reviewSubmissionItems を実行せず停止。',
-      );
-    }
-    console.log('✓ 両端の state チェック通過');
-
-    header('Exec Step 3: reviewSubmissionItem を作成 (version を紐付け)');
-    let itemPostError = null;
+    header('Step 3b-iii: POST /v1/reviewSubmissionItems で version を紐付け');
     try {
-      const itemResp = await addVersionToSubmission(
-        submission.id,
-        TARGET_VERSION_ID,
-      );
-      // 成功時もレスポンス全文をログ (id 確認 + 後続検証のため)
-      console.log('POST /reviewSubmissionItems response (full):');
-      console.log(JSON.stringify(itemResp, null, 2));
+      const itemResp = await call('POST', '/reviewSubmissionItems', {
+        data: {
+          type: 'reviewSubmissionItems',
+          relationships: {
+            reviewSubmission: {
+              data: { type: 'reviewSubmissions', id: submission.id },
+            },
+            appStoreVersion: {
+              data: { type: 'appStoreVersions', id: TARGET_VERSION_ID },
+            },
+          },
+        },
+      });
       console.log(`✓ created reviewSubmissionItem ${itemResp?.data?.id}`);
     } catch (e) {
-      itemPostError = e;
-      // 失敗時は status / body / parsed JSON / 完全 message を全部出す。
-      // 旧実装は `e.body?.slice(0, 2000)` だったが、e.body が空文字や
-      // 短文だと「status=409 だけ表示」に見えていた。
-      console.log('POST /reviewSubmissionItems failed:');
-      console.log(`  status       : ${e.status ?? '(none)'}`);
-      console.log(`  message      : ${e.message ?? '(none)'}`);
-      console.log('  body (raw)   :');
-      console.log(e.body ? String(e.body) : '(empty)');
-      if (e.json) {
-        console.log('  body (parsed JSON):');
-        console.log(JSON.stringify(e.json, null, 2));
-      } else if (e.body) {
-        console.log('  body (parsed JSON): (parse 失敗)');
-      }
-      console.log('continuing to verification step...');
+      // POST が失敗しても続行: items を GET して実態を確認する。
+      console.log('[info] item POST 失敗。items を GET で確認後 verification へ。');
     }
 
-    // -------- (5.5) Item 検証 --------
-    header('Exec Step 3.5: items 検証 (Step 6 に進むための gate)');
-    const items = await getSubmissionItems(submission.id);
+    header('Step 3b-iv: items を verifying GET で確認');
+    const itemsResp = await call(
+      'GET',
+      `/reviewSubmissions/${submission.id}/items`,
+      { include: 'appStoreVersion', limit: 25 },
+    );
+    const items = itemsResp?.data ?? [];
     console.log(`items count: ${items.length}`);
-    for (const it of items) {
-      const verId = it.relationships?.appStoreVersion?.data?.id ?? '(none)';
-      console.log(`  item ${it.id} → appStoreVersion ${verId}`);
-    }
     const includesTarget = items.some(
-      (it) => it.relationships?.appStoreVersion?.data?.id === TARGET_VERSION_ID,
+      (it) =>
+        it.relationships?.appStoreVersion?.data?.id === TARGET_VERSION_ID,
     );
     if (!includesTarget) {
-      const why = itemPostError
-        ? `(POST item が status=${itemPostError.status} で失敗していた)`
-        : '(POST item は成功したように見えたが verifying GET に target version が含まれていない)';
       throw new Error(
-        `submission ${submission.id} に target version ${TARGET_VERSION_ID} の item が無い。${why} submitted=true は実行しません。`,
+        `submission ${submission.id} に target version ${TARGET_VERSION_ID} の item が存在しない。submitted=true は実行せず停止。`,
       );
     }
-    console.log(`✓ target version ${TARGET_VERSION_ID} が items に含まれる`);
+    console.log('✓ target version が items に含まれる');
 
-    // -------- (6) Submit --------
-    header('Exec Step 4: PATCH submitted=true で審査提出');
-    const submitted = await submitReview(submission.id);
-    console.log('PATCH /reviewSubmissions response (head 1KB):');
-    console.log(JSON.stringify(submitted, null, 2).slice(0, 1000));
+    header('Step 3b-v: PATCH /v1/reviewSubmissions/{id} submitted=true');
+    const submitted = await call('PATCH', `/reviewSubmissions/${submission.id}`, {
+      data: {
+        type: 'reviewSubmissions',
+        id: submission.id,
+        attributes: { submitted: true },
+      },
+    });
     const sa = submitted?.data?.attributes ?? {};
     console.log('✓ submitted');
     console.log('  state         :', sa.state ?? '-');
     console.log('  submittedDate :', fmtDate(sa.submittedDate));
 
-    header('完了');
-    console.log('App Store Connect の Submissions で進捗を確認できます。');
+    header('完了 (reviewSubmissions フロー)');
+    console.log('App Store Connect の Submissions で進捗確認可。');
   } catch (e) {
     console.error('\n[fatal]', e.message);
     if (e.body) {
-      console.error('---response body (head)---');
-      console.error(String(e.body).slice(0, 2000));
+      console.error('---response body (head 3KB)---');
+      console.error(String(e.body).slice(0, 3000));
     }
     process.exit(1);
   }

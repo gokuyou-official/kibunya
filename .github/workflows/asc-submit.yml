@@ -1,30 +1,22 @@
 name: ASC Submit for Review
 
-# App Store Connect で最新 VALID ビルドを既存 appStoreVersion に紐付け、
-# reviewSubmissions API で審査提出するワークフロー。
+# App Store Connect の clean-slate 提出ワークフロー:
+#   1. 既存 reviewSubmissions を全 DELETE
+#   2. 最新 VALID ビルドを target version に紐付け
+#   3. legacy POST /appStoreVersionSubmissions → 失敗時は
+#      reviewSubmissions フロー (create + add item + submit) にフォールバック
+#
+# dry_run の概念は廃止。Run workflow を押した時点で常に実行。
 #
 # 必須 secrets:
 #   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
 on:
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Dry run (ビルド一覧 / 現状 / プラン表示のみ)。false で実適用'
-        required: true
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
       version_id:
         description: '対象 appStoreVersion ID (空で既定値を使用)'
         required: false
         default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef'
-        type: string
-      base_territory:
-        description: '価格スケジュールの baseTerritory (ISO 3-letter)'
-        required: false
-        default: 'JPN'
         type: string
 
 jobs:
@@ -66,16 +58,12 @@ jobs:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_APP_ID: '6766822899'
           ASC_VERSION_ID: ${{ inputs.version_id }}
-          ASC_BASE_TERRITORY: ${{ inputs.base_territory }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
           {
             echo "## ASC Submit for Review"
             echo ""
-            echo "- dry_run: \`${DRY_RUN}\`"
             echo "- version_id: \`${ASC_VERSION_ID:-(default)}\`"
-            echo "- base_territory: \`${ASC_BASE_TERRITORY}\`"
             echo ""
             echo '```'
             node scripts/asc-submit.mjs
