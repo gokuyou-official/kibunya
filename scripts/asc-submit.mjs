@@ -114,6 +114,123 @@ async function call(method, path, body) {
     }
 
     // -------------------------------------------------------------------
+    // Step 1.5: 価格スケジュール (App Store Connect UI 上 ¥0 でも API では
+    // baseTerritory=(none) / manualPrices count=0 になっている疑い濃厚
+    // なので、ここで強制的に正規化する)
+    // -------------------------------------------------------------------
+    header('Step 1.5: 価格スケジュール正規化 (free / JPN)');
+    {
+      let curSched = null;
+      try {
+        const schedResp = await call(
+          'GET',
+          `/apps/${ASC_APP_ID}/appPriceSchedule`,
+          { include: 'manualPrices,baseTerritory' },
+        );
+        curSched = schedResp?.data ?? null;
+      } catch (e) {
+        if (e.status === 404) {
+          console.log('[info] appPriceSchedule 未存在 (404)。新規作成へ。');
+        } else {
+          throw e;
+        }
+      }
+      const baseTerrId = curSched?.relationships?.baseTerritory?.data?.id;
+      const mpCount = curSched?.relationships?.manualPrices?.data?.length ?? 0;
+      const needsFix = !curSched || !baseTerrId || mpCount === 0;
+      console.log(
+        `現状: baseTerritory=${baseTerrId ?? '(none)'} ` +
+          `manualPrices=${mpCount} → ${needsFix ? '修正実施' : 'OK、skip'}`,
+      );
+
+      if (needsFix) {
+        // free pricePoint を探索。priceTier filter は deprecated 化済の
+        // 可能性があるので、まず付けて試し、失敗時は territory のみで
+        // 全件取得 → customerPrice='0' を JS 側で抽出。
+        let pricePointsResp;
+        try {
+          pricePointsResp = await call('GET', `/apps/${ASC_APP_ID}/appPricePoints`, {
+            'filter[territory]': 'JPN',
+            'filter[priceTier]': '0',
+            limit: 50,
+          });
+        } catch (e) {
+          console.log(
+            `[info] priceTier filter 失敗 (status=${e.status})。territory のみで再取得。`,
+          );
+          pricePointsResp = await call('GET', `/apps/${ASC_APP_ID}/appPricePoints`, {
+            'filter[territory]': 'JPN',
+            limit: 200,
+          });
+        }
+        const points = pricePointsResp?.data ?? [];
+        const free = points.find((p) => p.attributes?.customerPrice === '0');
+        if (!free) {
+          throw new Error(
+            'JPN territory に customerPrice="0" の appPricePoint が見つからない',
+          );
+        }
+        console.log(`free pricePoint: ${free.id}`);
+
+        // 既存スケジュールがあれば DELETE (失敗してもサイレント続行)
+        if (curSched?.id) {
+          try {
+            await call('DELETE', `/appPriceSchedules/${curSched.id}`);
+            console.log(`✓ deleted existing schedule ${curSched.id}`);
+          } catch (e) {
+            console.log(
+              `[info] DELETE /appPriceSchedules/${curSched.id} 失敗 (status=${e.status})、続行`,
+            );
+          }
+        }
+
+        // 新規 POST
+        const placeholder = 'free-price-1';
+        await call('POST', '/appPriceSchedules', {
+          data: {
+            type: 'appPriceSchedules',
+            relationships: {
+              app: { data: { type: 'apps', id: ASC_APP_ID } },
+              baseTerritory: {
+                data: { type: 'territories', id: 'JPN' },
+              },
+              manualPrices: {
+                data: [{ type: 'appPrices', id: placeholder }],
+              },
+            },
+          },
+          included: [
+            {
+              type: 'appPrices',
+              id: placeholder,
+              attributes: { startDate: null },
+              relationships: {
+                appPricePoint: {
+                  data: { type: 'appPricePoints', id: free.id },
+                },
+              },
+            },
+          ],
+        });
+        console.log('✓ price schedule POST 成功。Apple 側の伝播待ちで 5 秒 sleep。');
+        await new Promise((r) => setTimeout(r, 5000));
+
+        // 反映確認 (verifying GET)
+        try {
+          await call(
+            'GET',
+            `/apps/${ASC_APP_ID}/appPriceSchedule`,
+            { include: 'manualPrices,baseTerritory' },
+          );
+        } catch (e) {
+          console.log(
+            `[warn] verifying GET 失敗 (status=${e.status})。Apple 反映遅延の可能性、続行。`,
+          );
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------
     // Step 2: 最新 VALID build を target version に紐付け
     // -------------------------------------------------------------------
     header('Step 2: 最新 VALID ビルドを取得 → version に紐付け');
