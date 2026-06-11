@@ -301,11 +301,26 @@ async function submitReview(submissionId) {
     // 提出前 (= まだ submitted されていない) の submission を再利用候補とする。
     // state COMPLETING や READY_FOR_REVIEW は新規アイテム追加可能。
     // IN_REVIEW / WAITING_FOR_REVIEW などはもう触れない。
-    const reusable = openSubs.find((s) =>
+    let reusable = openSubs.find((s) =>
       ['COMPLETING', 'READY_FOR_REVIEW'].includes(s.attributes?.state),
     );
+    // 再利用候補が見つかっても items=0 で stuck している場合がある
+    // (過去の失敗回で残った gemini submission)。次の POST item で 409 を
+    // 返し続け、PATCH submitted も "appStoreVersionForReview required" で
+    // 詰まる。事前に items を確認し、空なら DELETE して再生成対象にする。
+    let staleSubmission = null;
     if (reusable) {
-      console.log(`\n再利用候補: ${reusable.id} (state=${reusable.attributes?.state})`);
+      const existingItems = await getSubmissionItems(reusable.id);
+      console.log(
+        `再利用候補: ${reusable.id} (state=${reusable.attributes?.state}, items=${existingItems.length})`,
+      );
+      if (existingItems.length === 0) {
+        console.log(
+          '  → items=0 で stuck。Exec で DELETE → 新規作成に切替。',
+        );
+        staleSubmission = reusable;
+        reusable = null;
+      }
     }
 
     // -------- 適用プラン --------
@@ -330,6 +345,10 @@ async function submitReview(submissionId) {
     }
     if (reusable) {
       console.log(`2. reviewSubmission: 既存 ${reusable.id} を再利用`);
+    } else if (staleSubmission) {
+      console.log(
+        `2. reviewSubmission: DELETE ${staleSubmission.id} (items=0 stuck) → 新規作成`,
+      );
     } else {
       console.log('2. reviewSubmission: 新規作成');
     }
@@ -386,6 +405,22 @@ async function submitReview(submissionId) {
       submission = reusable;
       console.log(`既存を再利用: ${submission.id}`);
     } else {
+      // stale (items=0) があれば先に DELETE。同じ App + Platform で複数の
+      // 提出前 submission を保持できない可能性があるため、生成前に掃除する。
+      if (staleSubmission) {
+        try {
+          await client.delete(`/reviewSubmissions/${staleSubmission.id}`);
+          console.log(
+            `✓ deleted stale reviewSubmission ${staleSubmission.id} (items=0)`,
+          );
+        } catch (e) {
+          console.log(
+            `[warn] stale submission ${staleSubmission.id} の DELETE 失敗 (status=${e.status}):`,
+          );
+          console.log(String(e.body ?? '').slice(0, 1500));
+          // 失敗しても新規 POST を試みる (Apple 側の状態次第で通る場合あり)。
+        }
+      }
       const created = await createReviewSubmission();
       submission = created?.data;
       console.log(`✓ created reviewSubmission ${submission.id}`);
