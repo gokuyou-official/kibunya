@@ -15,10 +15,9 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { sha256 } from 'js-sha256';
 import { auth, db } from '../config/firebase';
+import { generateRawNonce } from '../utils/authNonce';
 
-// Apple Sign-In 用の nonce ヘルパ。
-//
-// Sign in with Apple + Firebase Auth の正しい連携:
+// Apple Sign-In + Firebase Auth の正しい連携:
 //   1. クライアントでランダム raw nonce を生成
 //   2. raw を SHA-256 で hash し、Apple へ `nonce` として渡す
 //   3. Apple は identityToken の nonce claim に hash を埋め込んで返す
@@ -29,15 +28,6 @@ import { auth, db } from '../config/firebase';
 // nonce を渡さずに rawNonce: undefined だけにすると、Apple が自動生成した
 // nonce hash を identityToken に含めた場合に Firebase 側で検証失敗
 // (特に新規アカウント作成時に厳しい) を引き起こす可能性がある。
-function generateRawNonce(length = 32): string {
-  const chars =
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let out = '';
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
-}
 
 // エラーオブジェクトから安全に構造化情報を抜く。
 // TestFlight ではログが見えないので、最低限の構造を console に流して
