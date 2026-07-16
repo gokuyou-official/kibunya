@@ -69,21 +69,29 @@ jobs:
       - name: List installed Xcode versions (debug)
         run: ls -1 /Applications | grep -i '^Xcode' || true
 
-      - name: Select Xcode 26.1 (iOS 26 SDK required for expo-notifications)
+      - name: Select latest-stable Xcode (iOS 26 SDK required for expo-notifications)
         # Run #7 で expo-notifications@55.0.23 の DateComponentsSerializer.swift:9
         # が DateComponents.isRepeatedDay (iOS 26 API) を参照していることが判明。
-        # Xcode 16.4 の iPhoneOS18.5.sdk には存在しないため compile 不能。
-        # runner には Xcode 26.0/26.1/26.2/26.3 系も installed されているため
-        # iOS 26 SDK を持つ Xcode 26.1 を選択。
+        # 古い iPhoneOS SDK には存在しないため iOS 26 SDK を持つ Xcode が必要。
         #
-        # 懸念: Xcode 26 の Swift がさらに新しくなり (Swift 7 系?) Swift 5 mode 互換が
+        # 2026-07-15 (run #20) 追記: それまで '26.1' に固定していたが、
+        # macos-latest ランナーイメージが macos-15-arm64 → macos-26-arm64
+        # (macOS 26.4) に切り替わったことで発生した "iOS 26.1 Platform Not
+        # Installed." で archive 失敗。新イメージには Xcode 26.0〜26.6 系が
+        # 複数入っているが、ピン留めしたポイントリリースはアプリ本体のみで
+        # iOS Platform サポートファイルが未展開の "軽量版" だった模様。
+        # ホスト自体が macOS 26.4 である以上、GitHub がフル装備 (Platform 込み)
+        # を保証する 'latest-stable' を使えば同じ iOS 26 SDK 要件を満たしつつ
+        # 個別ポイントリリースの provisioning 状態に依存しなくなる。
+        #
+        # 懸念: Xcode の Swift がさらに新しくなり (Swift 7 系?) Swift 5 mode 互換が
         # 落ちている可能性。ただし plugins/withSwiftConcurrencyWorkaround.js の
         # Podfile post_install で全 Pod target に SWIFT_VERSION='5.0' を強制し、
         # 全 .swift ファイルの Swift 6+ isolated conformance を regex で
         # Swift 5 互換に変換しているため、原理的にこのまま通る想定。
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.1'
+          xcode-version: 'latest-stable'
 
       - name: Verify Xcode
         run: xcodebuild -version
