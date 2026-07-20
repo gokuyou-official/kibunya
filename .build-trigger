@@ -1,0 +1,7 @@
+# eas-local-build.yml 起動用マーカーファイル。
+# このファイルを変更して main に push すると、macOS ローカルビルド +
+# TestFlight 提出 (profile=production, auto_submit=true) が起動する。
+# クラウドビルド (eas-build.yml) は paths-ignore によりこの push では起動しない。
+build-request: 74
+requested-at: 2026-07-20T02:55:00Z
+reason: Build 74 - アカウント削除機能 (5.1.1(v)) を含む main (f845238 マージ済み) をTestFlightへ

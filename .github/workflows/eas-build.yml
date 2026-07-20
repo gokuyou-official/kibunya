@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+    # .build-trigger はローカルビルド (eas-local-build.yml) 起動専用の
+    # マーカーファイル。これとワークフロー定義のみの push では
+    # クラウドビルドを起動しない (二重ビルド / EAS quota 消費防止)。
+    paths-ignore:
+      - '.build-trigger'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 concurrency:

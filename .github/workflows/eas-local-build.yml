@@ -23,6 +23,16 @@ name: EAS Build (local on macOS) + Submit
 #   - submit は build profile に関わらず submit.production の config を使う
 #     (eas.json で submit は production しか定義されていないため)。
 on:
+  # .build-trigger (マーカーファイル) を変更した main への push でのみ発火。
+  # Web UI での workflow_dispatch 操作なしにビルドを起動できるようにする。
+  # コード変更の通常 push では発火しない (paths 限定)。
+  # push 起動時は profile=production / auto_submit=true 相当で動作する
+  # (job env の BUILD_PROFILE / AUTO_SUBMIT が inputs 未指定時に fallback)。
+  push:
+    branches:
+      - main
+    paths:
+      - '.build-trigger'
   workflow_dispatch:
     inputs:
       profile:
@@ -55,6 +65,10 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       # expo-doctor は EAS Cloud Build 側でしか効かないので明示的に skip
       EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '1'
+      # push (マーカーファイル) 起動時は inputs が空になるため fallback を持つ。
+      # workflow_dispatch 起動時は選択された inputs がそのまま優先される。
+      BUILD_PROFILE: ${{ inputs.profile || 'production' }}
+      AUTO_SUBMIT: ${{ inputs.auto_submit || 'true' }}
     steps:
       - name: Validate EXPO_TOKEN
         run: |
@@ -123,7 +137,7 @@ jobs:
           eas build \
             --local \
             --platform ios \
-            --profile "${{ inputs.profile }}" \
+            --profile "$BUILD_PROFILE" \
             --non-interactive \
             --output "./build.ipa"
 
@@ -139,7 +153,7 @@ jobs:
         # submit が失敗しても IPA を再利用できるよう artifact 保管。
         uses: actions/upload-artifact@v4
         with:
-          name: build-ipa-${{ inputs.profile }}-${{ github.run_id }}
+          name: build-ipa-${{ env.BUILD_PROFILE }}-${{ github.run_id }}
           path: ./build.ipa
           retention-days: 7
 
@@ -150,7 +164,7 @@ jobs:
         # altool は ASC API key 認証 (--apiKey / --apiIssuer) を flag 直渡しで
         # サポートし、P8 ファイルは ~/.appstoreconnect/private_keys/
         # AuthKey_<KEY_ID>.p8 の規約パスから自動読込。
-        if: ${{ inputs.auto_submit == 'true' }}
+        if: ${{ env.AUTO_SUBMIT == 'true' }}
         env:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
