@@ -150,6 +150,28 @@ async function patchClientId(token, newClientId) {
     console.log('現在の clientId :', current.clientId);
     console.log('enabled         :', current.enabled);
 
+    // アカウント削除時の Apple トークン失効 (Guideline 5.1.1(v)) は
+    // Identity Toolkit の accounts:revokeToken 経由で Firebase が Apple へ
+    // revoke を代行する。その際 Firebase 側は codeFlowConfig
+    // (teamId / keyId / privateKey) を使って client_secret JWT を署名するため、
+    // 未設定だと revoke がサーバー側で失敗する。設定状況をここで可視化する。
+    const cf = current.codeFlowConfig ?? {};
+    console.log('\n--- Apple トークン失効 (revoke) 用 codeFlowConfig ---');
+    console.log('  teamId     :', cf.teamId ? `設定済 (${cf.teamId})` : '★未設定');
+    console.log('  keyId      :', cf.keyId ? `設定済 (${cf.keyId})` : '★未設定');
+    console.log(
+      '  privateKey :',
+      cf.privateKey ? '設定済 (値は非表示)' : '未返却 (APIが秘匿する場合あり)',
+    );
+    if (!cf.teamId || !cf.keyId) {
+      console.log(
+        '\n⚠️ teamId / keyId が未設定です。この状態では accounts:revokeToken が\n' +
+          '   失敗し、Apple トークン失効が行われません (5.1.1(v) 再却下リスク)。',
+      );
+    } else {
+      console.log('\n✓ revoke に必要な設定は揃っています。');
+    }
+
     if (current.clientId === NEW_CLIENT_ID) {
       console.log('\n→ 既に正しい値が設定されています。更新不要。');
       return;

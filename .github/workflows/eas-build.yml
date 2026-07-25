@@ -10,6 +10,10 @@ on:
     paths-ignore:
       - '.build-trigger'
       - '.github/workflows/**'
+      # scripts/ は ASC / Firebase 管理用の Node スクリプト群でアプリの
+      # バンドルには含まれない。ここの変更で iOS ビルドを走らせる意味はない。
+      - 'scripts/**'
+      - '**.md'
   workflow_dispatch:
 
 concurrency:
