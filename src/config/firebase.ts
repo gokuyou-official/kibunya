@@ -74,3 +74,7 @@ export const app = _app as FirebaseApp;
 export const auth = _auth as Auth;
 export const db = _db as Firestore;
 export const initError = _initError;
+
+// Identity Toolkit REST API を直接叩く箇所 (Apple トークン失効) で使う。
+// Web SDK の apiKey は公開前提の値なので export しても実害はない。
+export const firebaseApiKey = firebaseConfig.apiKey;

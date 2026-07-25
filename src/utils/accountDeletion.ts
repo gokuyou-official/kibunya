@@ -29,7 +29,7 @@ import {
 } from 'firebase/firestore';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { sha256 } from 'js-sha256';
-import { db } from '../config/firebase';
+import { db, firebaseApiKey } from '../config/firebase';
 import { generateRawNonce } from './authNonce';
 
 export type SignInProvider = 'apple.com' | 'password' | 'unknown';
@@ -41,7 +41,11 @@ export function getSignInProvider(user: User | null | undefined): SignInProvider
   return 'unknown';
 }
 
-async function reauthenticateWithApple(user: User): Promise<void> {
+// Apple で再認証し、同時に「今回の認可コード」を取り出す。
+// この authorizationCode は Apple トークン失効 (revoke) に使う。ログイン時に
+// 取得したコードは短命かつ再利用不可なので、削除直前の再認証で得た新しい
+// コードを使うのが確実。
+async function reauthenticateWithApple(user: User): Promise<string | undefined> {
   const available = await AppleAuthentication.isAvailableAsync();
   if (!available) {
     throw new Error('この端末ではAppleサインインが使えません');
@@ -64,6 +68,7 @@ async function reauthenticateWithApple(user: User): Promise<void> {
     rawNonce,
   });
   await reauthenticateWithCredential(user, fbCredential);
+  return credential.authorizationCode ?? undefined;
 }
 
 async function reauthenticateWithPassword(user: User, password: string): Promise<void> {
@@ -76,11 +81,17 @@ async function reauthenticateWithPassword(user: User, password: string): Promise
 
 // サインイン方法に応じて再認証する。password 方式のみ呼び出し側からの
 // パスワード入力が必要 (呼び出し前に UI でモーダル等を出して取得する)。
-export async function reauthenticate(user: User, password?: string): Promise<void> {
+// Apple の場合のみ、失効処理に使う authorizationCode を返す。
+export async function reauthenticate(
+  user: User,
+  password?: string,
+): Promise<{ appleAuthorizationCode?: string }> {
   const provider = getSignInProvider(user);
   if (provider === 'apple.com') {
-    await reauthenticateWithApple(user);
-  } else if (provider === 'password') {
+    const appleAuthorizationCode = await reauthenticateWithApple(user);
+    return { appleAuthorizationCode };
+  }
+  if (provider === 'password') {
     if (!password) {
       throw new Error('パスワードを入力してください');
     }
@@ -88,6 +99,50 @@ export async function reauthenticate(user: User, password?: string): Promise<voi
   }
   // provider === 'unknown' の場合は再認証をスキップし、削除処理自体に
   // 委ねる (requires-recent-login が出たら呼び出し側の catch で案内する)。
+  return {};
+}
+
+// Apple のサインイン連携を失効させる (App Store Guideline 5.1.1(v) 要件)。
+//
+// Firebase Auth のユーザー削除だけでは Apple 側の「このAppでApple IDを使用」
+// 連携が残るため、Apple は審査でトークン失効を必須としている。
+//
+// 実装方式の選定:
+//   - Firebase JS SDK の revokeAccessToken() は tokenType='ACCESS_TOKEN' 固定
+//     (SDK 実装で確認済)。ネイティブの Sign in with Apple から得られるのは
+//     authorizationCode (=CODE) なのでこの API は使えない。
+//   - Apple の POST https://appleid.apple.com/auth/revoke を直接叩くには
+//     client_secret (Apple の .p8 秘密鍵で署名した JWT) が必要で、鍵を
+//     アプリに同梱するのは論外。サーバー (Cloud Functions) を建てると
+//     Blaze プランが必要になる。
+//   - 結論: Firebase iOS SDK の revokeToken(withAuthorizationCode:) と同じ
+//     Identity Toolkit の accounts:revokeToken を tokenType='CODE' で叩く。
+//     Firebase のバックエンドが Apple プロバイダ設定の鍵を使って Apple へ
+//     revoke を代行するため、追加の鍵もサーバーも課金も不要。
+async function revokeAppleToken(
+  user: User,
+  authorizationCode: string,
+): Promise<void> {
+  const idToken = await user.getIdToken();
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v2/accounts:revokeToken?key=${encodeURIComponent(firebaseApiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: 'apple.com',
+        tokenType: 'CODE',
+        token: authorizationCode,
+        idToken,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(
+      `accounts:revokeToken failed: HTTP ${res.status} ${body.slice(0, 300)}`,
+    );
+  }
 }
 
 const BATCH_LIMIT = 450;
@@ -129,9 +184,28 @@ export async function deleteUserFirestoreData(uid: string): Promise<void> {
 }
 
 // アカウント削除のオーケストレーション:
-//   再認証 → Firestore データ全削除 → Firebase Auth ユーザー削除
+//   再認証 → Firestore データ全削除 → Apple トークン失効 → Auth ユーザー削除
+//
+// revoke を deleteUser より前に置くのは必須。accounts:revokeToken は有効な
+// idToken を要求するため、Auth ユーザーを消した後では実行できない。
 export async function deleteAccount(user: User, password?: string): Promise<void> {
-  await reauthenticate(user, password);
+  const { appleAuthorizationCode } = await reauthenticate(user, password);
+
   await deleteUserFirestoreData(user.uid);
+
+  if (appleAuthorizationCode) {
+    try {
+      await revokeAppleToken(user, appleAuthorizationCode);
+    } catch (e) {
+      // 失効に失敗してもアカウント削除自体は続行する。
+      // ここで throw すると「データは消えたのにアカウントが残る」という
+      // 最悪の中途半端な状態でユーザーが詰む。失効はサーバー側設定
+      // (Firebase の Apple プロバイダ鍵) に依存するため、確実性は
+      // 削除完了より一段低いものとして扱う。
+      // eslint-disable-next-line no-console
+      console.warn('[accountDeletion] Apple token revoke failed (continuing)', e);
+    }
+  }
+
   await deleteUser(user);
 }
