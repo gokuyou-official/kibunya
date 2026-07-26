@@ -36,6 +36,22 @@ jobs:
           node-version: 22
       - run: npm ci
 
+      - name: Fix readiness (contentRights / category)
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+          DRY_RUN: 'false'
+        run: |
+          set -o pipefail
+          {
+            echo '```'
+            node scripts/asc-fix-readiness.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Run diagnosis
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
