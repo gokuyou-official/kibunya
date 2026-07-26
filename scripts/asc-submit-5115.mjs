@@ -166,8 +166,24 @@ async function attachBuild(versionId) {
     );
     if (!build) throw new Error('VALID な build が見つかりません');
   }
-  console.log(`\n→ build ${build.attributes?.version} (id=${build.id}) を紐付け`);
+  // 既に同じ build が紐付いているなら PATCH しない。
+  // 再紐付けすると Apple 側の内部処理がやり直しになり、
+  // "Version is not ready to be submitted yet, please try again later."
+  // を誘発しうる (毎回貼り直していたのが提出失敗の一因の可能性)。
+  const current = await call('GET', `/appStoreVersions/${versionId}/build`).catch(
+    () => null,
+  );
+  const currentId = current?.data?.id;
+  if (currentId === build.id) {
+    console.log(
+      `\n→ build ${build.attributes?.version} (id=${build.id}) は既に紐付け済み。PATCH をスキップする`,
+    );
+    return build;
+  }
 
+  console.log(
+    `\n→ build ${build.attributes?.version} (id=${build.id}) を紐付け (現在: ${currentId ?? 'なし'})`,
+  );
   await call('PATCH', `/appStoreVersions/${versionId}/relationships/build`, {
     body: { data: { type: 'builds', id: build.id } },
   });
