@@ -58,17 +58,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set age rating declaration (approved values)
+      - name: Verify readiness (read-only)
+        # 年齢レーティングは App Store Connect の UI で回答・確定済みのため
+        # ここでは絶対に上書きしない。DRY_RUN=true にし、かつ
+        # AGE_* env を渡さないことで二重に書き込みを防ぐ
+        # (スクリプトは AGE_* が明示的に渡された時だけ PATCH する実装)。
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_APP_ID: '6766822899'
           TARGET_VERSION_STRING: ${{ inputs.version_string }}
-          DRY_RUN: 'false'
-          # カネさん承認済みの申告値
-          AGE_SOCIAL_MEDIA: 'true'
-          AGE_SOCIAL_MEDIA_AGE_RESTRICTED: 'false'
+          DRY_RUN: 'true'
         run: |
           set -o pipefail
           {
