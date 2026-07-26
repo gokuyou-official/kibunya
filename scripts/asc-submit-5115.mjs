@@ -245,34 +245,121 @@ async function submitLegacy(versionId) {
   console.log('✓ legacy 提出成功');
 }
 
-async function purgeDraftReviewSubmissions() {
+// この App の reviewSubmissions は DELETE を許可していない
+// (Allowed operations: CREATE, GET_COLLECTION, GET_INSTANCE, UPDATE)。
+// 不要になったものは PATCH { canceled: true } で片付ける。
+async function tryCancel(subId, why) {
+  try {
+    await call('PATCH', `/reviewSubmissions/${subId}`, {
+      body: {
+        data: {
+          type: 'reviewSubmissions',
+          id: subId,
+          attributes: { canceled: true },
+        },
+      },
+    });
+    console.log(`  ✓ reviewSubmission ${subId} を cancel (${why})`);
+  } catch (e) {
+    console.log(`  [warn] cancel ${subId} 失敗: ${errInfo(e)}`);
+  }
+}
+
+// 409 ITEM_PART_OF_ANOTHER_SUBMISSION の associatedErrors から
+// 「既に紐付いている reviewSubmission の ID」を抜き出す。
+function extractOwningSubmissionId(e) {
+  const errors = e?.json?.errors ?? [];
+  for (const err of errors) {
+    const assoc = err?.meta?.associatedErrors ?? {};
+    for (const list of Object.values(assoc)) {
+      for (const a of list ?? []) {
+        if (a?.code === 'STATE_ERROR.ITEM_PART_OF_ANOTHER_SUBMISSION') {
+          const m = /reviewSubmission with id ([0-9a-fA-F-]+)/.exec(
+            a?.detail ?? '',
+          );
+          if (m) return m[1];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// 対象バージョンを含んでいる既存 reviewSubmission を探す。
+// 却下後は前回の submission (state=UNRESOLVED_ISSUES) にバージョンが
+// 紐付いたまま残るため、新規作成ではなくそれを再提出するのが正しい。
+async function findSubmissionContainingVersion(versionId) {
   const resp = await call('GET', '/reviewSubmissions', {
     query: { 'filter[app]': APP_ID, 'filter[platform]': 'IOS', limit: 50 },
   });
   const subs = resp?.data ?? [];
-  const drafts = subs.filter((s) => s.attributes?.state === 'READY_FOR_REVIEW');
-  console.log(
-    `reviewSubmissions ${subs.length} 件 (うち未提出ドラフト ${drafts.length} 件)`,
-  );
+  console.log(`既存 reviewSubmissions: ${subs.length} 件`);
   for (const s of subs) {
-    const state = s.attributes?.state;
-    if (state === 'WAITING_FOR_REVIEW' || state === 'IN_REVIEW') {
-      console.log(`  skip ${s.id} (state=${state} / 既に審査中)`);
-      continue;
-    }
+    console.log(`  id=${s.id} state=${s.attributes?.state}`);
+  }
+
+  // 終了済みは対象外。再提出できる可能性があるものだけ見る。
+  const REUSABLE = new Set(['READY_FOR_REVIEW', 'UNRESOLVED_ISSUES']);
+  const emptyDrafts = [];
+  let found = null;
+  for (const s of subs) {
+    if (!REUSABLE.has(s.attributes?.state)) continue;
     try {
-      await call('DELETE', `/reviewSubmissions/${s.id}`);
-      console.log(`  DELETE ${s.id} (state=${state}) ✓`);
+      const items = await call('GET', `/reviewSubmissions/${s.id}/items`, {
+        query: { limit: 50 },
+      });
+      const list = items?.data ?? [];
+      const hit = list.some(
+        (it) => it.relationships?.appStoreVersion?.data?.id === versionId,
+      );
+      if (hit && !found) {
+        console.log(
+          `\n→ バージョン ${versionId} は submission ${s.id} (state=${s.attributes?.state}) に既に含まれている`,
+        );
+        found = s;
+      } else if (list.length === 0 && s.attributes?.state === 'READY_FOR_REVIEW') {
+        // 過去の失敗実行で作られた空ドラフト。放置すると溜まって
+        // 上限エラーの原因になるため cancel 対象にする。
+        emptyDrafts.push(s.id);
+      }
     } catch (e) {
-      console.log(`  DELETE ${s.id} 失敗 (state=${state}): ${errInfo(e)}`);
+      console.log(`  [warn] items 取得失敗 ${s.id}: ${errInfo(e)}`);
     }
   }
+
+  if (emptyDrafts.length > 0) {
+    console.log(`\n空ドラフト ${emptyDrafts.length} 件を cancel する`);
+    for (const id of emptyDrafts) await tryCancel(id, '中身が空のため');
+  }
+
+  return found;
+}
+
+async function submitSubmission(subId) {
+  await call('PATCH', `/reviewSubmissions/${subId}`, {
+    body: {
+      data: {
+        type: 'reviewSubmissions',
+        id: subId,
+        attributes: { submitted: true },
+      },
+    },
+  });
+  console.log(`✓ reviewSubmission ${subId} を submitted=true で提出`);
 }
 
 async function submitViaReviewSubmissions(versionId) {
   header('Step 4b: reviewSubmissions フロー');
-  await purgeDraftReviewSubmissions();
 
+  // 1) 既にバージョンを含む submission があればそれを再提出する
+  const existing = await findSubmissionContainingVersion(versionId);
+  if (existing) {
+    await submitSubmission(existing.id);
+    return;
+  }
+
+  // 2) 無ければ新規作成 → item 追加 → 提出
+  console.log('\n→ 対象バージョンを含む submission が無いため新規作成');
   const created = await call('POST', '/reviewSubmissions', {
     body: {
       data: {
@@ -285,33 +372,37 @@ async function submitViaReviewSubmissions(versionId) {
   const subId = created.data.id;
   console.log(`✓ reviewSubmission 作成 id=${subId}`);
 
-  await call('POST', '/reviewSubmissionItems', {
-    body: {
-      data: {
-        type: 'reviewSubmissionItems',
-        relationships: {
-          reviewSubmission: {
-            data: { type: 'reviewSubmissions', id: subId },
-          },
-          appStoreVersion: {
-            data: { type: 'appStoreVersions', id: versionId },
+  try {
+    await call('POST', '/reviewSubmissionItems', {
+      body: {
+        data: {
+          type: 'reviewSubmissionItems',
+          relationships: {
+            reviewSubmission: {
+              data: { type: 'reviewSubmissions', id: subId },
+            },
+            appStoreVersion: {
+              data: { type: 'appStoreVersions', id: versionId },
+            },
           },
         },
       },
-    },
-  });
-  console.log('✓ reviewSubmissionItem 追加');
+    });
+    console.log('✓ reviewSubmissionItem 追加');
+  } catch (e) {
+    // 競合: 別 submission が既にこのバージョンを保持している。
+    // 作りかけの空 submission を片付けて、保持側を提出する。
+    const owner = extractOwningSubmissionId(e);
+    if (!owner) throw e;
+    console.log(
+      `\n[recover] バージョンは submission ${owner} が保持中。作成した空 submission を破棄して ${owner} を提出する`,
+    );
+    await tryCancel(subId, '空のまま不要になったため');
+    await submitSubmission(owner);
+    return;
+  }
 
-  await call('PATCH', `/reviewSubmissions/${subId}`, {
-    body: {
-      data: {
-        type: 'reviewSubmissions',
-        id: subId,
-        attributes: { submitted: true },
-      },
-    },
-  });
-  console.log('✓ submitted=true にして提出');
+  await submitSubmission(subId);
 }
 
 async function verify(versionId) {
