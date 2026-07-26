@@ -58,6 +58,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set age rating declaration (approved values)
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+          DRY_RUN: 'false'
+          # カネさん承認済みの申告値
+          AGE_SOCIAL_MEDIA: 'true'
+          AGE_SOCIAL_MEDIA_AGE_RESTRICTED: 'false'
+        run: |
+          set -o pipefail
+          {
+            echo '```'
+            node scripts/asc-fix-readiness.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Run submission script
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -76,5 +95,22 @@ jobs:
             echo ""
             echo '```'
             node scripts/asc-submit-5115.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Diagnose on failure
+        if: failure()
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+        run: |
+          set -o pipefail
+          {
+            echo '## 失敗時の状態ダンプ'
+            echo '```'
+            node scripts/asc-diagnose-version.mjs
             echo '```'
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

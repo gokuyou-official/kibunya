@@ -122,7 +122,44 @@ async function main() {
       }
     }
 
-    // 年齢レーティングの中身を確認 (値の決定は製品判断なので自動では埋めない)
+    // 年齢レーティングの未回答項目を埋める。
+    // Apple が後から追加した質問 (socialMedia 等) が未回答だと、その App は
+    // 提出できず "Version is not ready to be submitted yet" になる。
+    // 申告内容は Apple への公式な回答でありレーティングに影響するため、
+    // 値は必ず env で明示的に渡された場合のみ設定する (既定値で勝手に埋めない)。
+    if (ageDeclId && !DRY_RUN) {
+      const patchAttrs = {};
+      if (process.env.AGE_SOCIAL_MEDIA !== undefined && process.env.AGE_SOCIAL_MEDIA !== '') {
+        patchAttrs.socialMedia = process.env.AGE_SOCIAL_MEDIA === 'true';
+      }
+      if (
+        process.env.AGE_SOCIAL_MEDIA_AGE_RESTRICTED !== undefined &&
+        process.env.AGE_SOCIAL_MEDIA_AGE_RESTRICTED !== ''
+      ) {
+        patchAttrs.socialMediaAgeRestricted =
+          process.env.AGE_SOCIAL_MEDIA_AGE_RESTRICTED === 'true';
+      }
+      if (Object.keys(patchAttrs).length > 0) {
+        console.log(
+          `  → ageRatingDeclaration ${ageDeclId} に ${JSON.stringify(patchAttrs)} を設定`,
+        );
+        try {
+          await asc.patch(`/ageRatingDeclarations/${ageDeclId}`, {
+            data: {
+              type: 'ageRatingDeclarations',
+              id: ageDeclId,
+              attributes: patchAttrs,
+            },
+          });
+          console.log('  ✓ 設定成功');
+        } catch (e) {
+          console.log(`  [warn] 設定失敗: ${errInfo(e)}`);
+          todo.push(`ageRatingDeclaration の更新に失敗: ${errInfo(e)}`);
+        }
+      }
+    }
+
+    // 年齢レーティングの現状を表示
     if (ageDeclId) {
       const decl = included.find(
         (x) => x.type === 'ageRatingDeclarations' && x.id === ageDeclId,
