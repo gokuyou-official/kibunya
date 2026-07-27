@@ -155,7 +155,9 @@ async function patchClientId(token, newClientId) {
     // revoke を代行する。その際 Firebase 側は codeFlowConfig
     // (teamId / keyId / privateKey) を使って client_secret JWT を署名するため、
     // 未設定だと revoke がサーバー側で失敗する。設定状況をここで可視化する。
-    const cf = current.codeFlowConfig ?? {};
+    // codeFlowConfig は appleSignInConfig の下にネストされている
+    // (Identity Toolkit Admin API v2 の discovery document で確認)。
+    const cf = current.appleSignInConfig?.codeFlowConfig ?? {};
     console.log('\n--- Apple トークン失効 (revoke) 用 codeFlowConfig ---');
     console.log('  teamId     :', cf.teamId ? `設定済 (${cf.teamId})` : '★未設定');
     console.log('  keyId      :', cf.keyId ? `設定済 (${cf.keyId})` : '★未設定');

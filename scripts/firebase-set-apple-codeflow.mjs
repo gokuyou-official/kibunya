@@ -86,10 +86,20 @@ async function getConfig(token) {
   return JSON.parse(text);
 }
 
+// ⚠️ codeFlowConfig はトップレベルではなく appleSignInConfig の下にある。
+// Identity Toolkit Admin API v2 の discovery document で確認済み:
+//   DefaultSupportedIdpConfig
+//     └ appleSignInConfig: AppleSignInConfig
+//          ├ bundleIds: array
+//          └ codeFlowConfig: { privateKey, teamId, keyId }
+// 当初トップレベルとして読み書きしていたため、GET は常に「未設定」と表示し、
+// PATCH は 400 "Unknown name codeFlowConfig" で失敗していた。
 function describeConfig(cfg) {
-  const cf = cfg.codeFlowConfig ?? {};
+  const apple = cfg.appleSignInConfig ?? {};
+  const cf = apple.codeFlowConfig ?? {};
   console.log(`  clientId : ${cfg.clientId}`);
   console.log(`  enabled  : ${cfg.enabled}`);
+  console.log(`  bundleIds: ${JSON.stringify(apple.bundleIds ?? [])}`);
   console.log(`  teamId   : ${cf.teamId ? `設定済 (${cf.teamId})` : '未設定'}`);
   console.log(`  keyId    : ${cf.keyId ? `設定済 (${cf.keyId})` : '未設定'}`);
   console.log(
@@ -130,20 +140,29 @@ async function main() {
     return;
   }
 
-  header('codeFlowConfig を PATCH');
-  const res = await fetch(`${IDP_URL}?updateMask=codeFlowConfig`, {
+  header('appleSignInConfig.codeFlowConfig を PATCH');
+  // updateMask=appleSignInConfig は appleSignInConfig 全体を置き換えるため、
+  // 既存の bundleIds を GET 結果から引き継いで消さないようにする。
+  const existingBundleIds = before.appleSignInConfig?.bundleIds;
+  const appleSignInConfig = {
+    codeFlowConfig: {
+      teamId: TEAM_ID,
+      keyId: KEY_ID,
+      privateKey: PRIVATE_KEY,
+    },
+  };
+  if (Array.isArray(existingBundleIds) && existingBundleIds.length > 0) {
+    appleSignInConfig.bundleIds = existingBundleIds;
+    console.log(`  既存 bundleIds を引き継ぐ: ${JSON.stringify(existingBundleIds)}`);
+  }
+
+  const res = await fetch(`${IDP_URL}?updateMask=appleSignInConfig`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      codeFlowConfig: {
-        teamId: TEAM_ID,
-        keyId: KEY_ID,
-        privateKey: PRIVATE_KEY,
-      },
-    }),
+    body: JSON.stringify({ appleSignInConfig }),
   });
   const text = await res.text();
   if (!res.ok) {
