@@ -1,0 +1,111 @@
+name: ASC Screenshots (list / delete)
+
+# App Store 掲載スクリーンショットの一覧化と、指定した 1 枚の削除。
+#
+# mode=list   : 読み取り専用。全スクリーンショットの ID / position /
+#               プレビュー URL を出力する。
+# mode=delete : screenshot_id で指定した 1 枚を削除する。
+#               既定は dry_run=true。実削除には dry_run=false が必要。
+#               expect_file_name を指定すると fileName 不一致で中断する
+#               (ID の取り違えによる誤削除を防ぐ)。
+#
+# 必須 secrets: ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '実行する操作'
+        required: true
+        default: 'list'
+        type: choice
+        options:
+          - list
+          - delete
+      screenshot_id:
+        description: '削除するスクリーンショットの ID (mode=delete のとき必須)'
+        required: false
+        default: ''
+        type: string
+      expect_file_name:
+        description: '削除対象の fileName (誤削除防止。不一致なら中断)'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'mode=delete のとき: true なら確認のみで削除しない'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  screenshots:
+    name: List or delete App Store screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"; missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: List screenshots
+        if: ${{ inputs.mode == 'list' }}
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+        run: |
+          set -o pipefail
+          {
+            echo "## App Store Screenshots"
+            echo ""
+            echo '```'
+            node scripts/asc-list-screenshots.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete screenshot
+        if: ${{ inputs.mode == 'delete' }}
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          SCREENSHOT_ID: ${{ inputs.screenshot_id }}
+          EXPECT_FILE_NAME: ${{ inputs.expect_file_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          {
+            echo "## Delete Screenshot"
+            echo ""
+            echo "- screenshot_id: \`${SCREENSHOT_ID}\`"
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-delete-screenshot.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
