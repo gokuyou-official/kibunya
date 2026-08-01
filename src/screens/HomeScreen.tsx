@@ -11,6 +11,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -29,6 +30,10 @@ import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
 import { useWaitingReset } from '../contexts/WaitingResetContext';
+import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
+
+// 「待ちますかー」を自動解除するまでの時間 (3時間)
+const WAITING_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 
 export default function HomeScreen({ navigation, route }: any) {
   const { currentUser } = useAuth();
@@ -58,6 +63,21 @@ export default function HomeScreen({ navigation, route }: any) {
   const [overlay, setOverlay] = useState(false);
   const [sending, setSending] = useState(false);
   const [area, setArea] = useState('');
+  // 「いきますかー」を送信した時刻 (epoch ms)。3時間経過の判定に使う。
+  // アプリを完全終了すれば waiting ごと消えるので永続化はしない。
+  const [waitingStartedAt, setWaitingStartedAt] = useState<number | null>(null);
+  // 3時間経過時に「キブンじゃないかも？」を出している間 true
+  const [expiredNotice, setExpiredNotice] = useState(false);
+  // 期限切れ処理の二重発火ガード (AppState 復帰とタイマーが同時に来る等)
+  const expiringRef = useRef(false);
+
+  // 全ての解除経路が通る出口。タイマー関連の状態もまとめて畳む。
+  const clearWaiting = useCallback(() => {
+    expiringRef.current = false;
+    setWaiting(false);
+    setWaitingStartedAt(null);
+    setExpiredNotice(false);
+  }, []);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -113,6 +133,9 @@ export default function HomeScreen({ navigation, route }: any) {
         });
       }
       setOverlay(true);
+      expiringRef.current = false;
+      setWaitingStartedAt(Date.now());
+      setExpiredNotice(false);
       setWaiting(true);
     } catch (e: any) {
       console.error('handleSend error', e);
@@ -127,8 +150,8 @@ export default function HomeScreen({ navigation, route }: any) {
   // 保証するための導線。
   const resetAt = route?.params?.resetAt;
   useEffect(() => {
-    if (resetAt) setWaiting(false);
-  }, [resetAt]);
+    if (resetAt) clearWaiting();
+  }, [resetAt, clearWaiting]);
 
   // 待機解除 (2): 友達から「かー」が返ってきた時の自動解除。
   // App.tsx の Root が useMatchEvents で reaction を検知した時点で
@@ -137,8 +160,55 @@ export default function HomeScreen({ navigation, route }: any) {
   // 押せる状態になる。
   const { resetToken } = useWaitingReset();
   useEffect(() => {
-    if (resetToken > 0) setWaiting(false);
-  }, [resetToken]);
+    if (resetToken > 0) clearWaiting();
+  }, [resetToken, clearWaiting]);
+
+  // 待機解除 (4): 送信から3時間経過。
+  //
+  // setTimeout だけに頼らないのは、アプリがバックグラウンドに入ると
+  // JS タイマーが停止/遅延して発火時刻がずれるため。送信時刻を保持し、
+  //   - 残り時間ぶんの setTimeout
+  //   - フォアグラウンド復帰 (AppState 'active') 時の再判定
+  // の両方で「今の時刻」と比較する。復帰時に既に3時間を超えていれば
+  // その場で解除する。
+  useEffect(() => {
+    if (!waiting || waitingStartedAt === null) return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const check = () => {
+      if (cancelled) return;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const remaining = waitingStartedAt + WAITING_TIMEOUT_MS - Date.now();
+      if (remaining <= 0) {
+        // 一言を出してから解除する。実際の解除は
+        // WaitingExpiredNotice の onFinish (= clearWaiting) が行う。
+        if (expiringRef.current) return;
+        expiringRef.current = true;
+        setExpiredNotice(true);
+        return;
+      }
+      timer = setTimeout(check, remaining);
+    };
+
+    check();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') check();
+    });
+
+    // waiting が false になった時 / 別の解除経路が走った時にここが必ず
+    // 呼ばれ、タイマーと AppState 購読を落とす。
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      sub.remove();
+    };
+  }, [waiting, waitingStartedAt]);
 
   // 表示可能なアクティビティが無い場合 (interests 未設定 or enabled なものが無い)
   if (visibleIds.length === 0) {
@@ -186,9 +256,10 @@ export default function HomeScreen({ navigation, route }: any) {
           <ActivityTab
             availableIds={visibleIds}
             activeId={activeId}
+            // 待機解除 (3): アクティビティタブの切替
             onChange={(id) => {
               setActiveId(id);
-              setWaiting(false);
+              clearWaiting();
             }}
           />
         </View>
@@ -296,6 +367,12 @@ export default function HomeScreen({ navigation, route }: any) {
         onClose={() => setOverlay(false)}
         activityId={activity.id}
       />
+
+      {/*
+        3時間経過の一言。フェードアウトし終わってから clearWaiting() が
+        走るので、「表示 → 通常画面へ」の順序になる。
+      */}
+      <WaitingExpiredNotice visible={expiredNotice} onFinish={clearWaiting} />
     </SafeAreaView>
   );
 }
