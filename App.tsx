@@ -25,6 +25,7 @@ import {
   setupNotificationHandlers,
 } from './src/utils/pushNotifications';
 import { handleInviteLink } from './src/utils/inviteLink';
+import { WaitingResetProvider } from './src/contexts/WaitingResetContext';
 import { getEnabledActivityIds } from './src/config/activities';
 
 import OnboardingScreen from './src/screens/OnboardingScreen';
@@ -148,6 +149,19 @@ function Root() {
   // ナビゲーションツリー外で render するため Root に保持し、
   // どのタブ/画面にいてもグローバルに重ねて表示できるようにする。
   const { current: matchEvent, dismiss: dismissMatch } = useMatchEvents(currentUser?.uid);
+
+  // 「かー」を受け取ったら HomeScreen の待機状態を解除する。
+  // 祝祭演出が出ているのに裏で「友達の「かー」を待ってます」が
+  // 残り続けるのはちぐはぐなため。
+  // dismiss ではなく検知の時点で解除しておくことで、演出を閉じて
+  // HomeScreen が見えた瞬間には既に「いきますかー」が押せる状態になる
+  // (閉じた後に表示が切り替わるチラつきを避ける)。
+  const [waitingResetToken, setWaitingResetToken] = useState(0);
+  const matchEventId = matchEvent?.id;
+  useEffect(() => {
+    if (!matchEventId) return;
+    setWaitingResetToken((n) => n + 1);
+  }, [matchEventId]);
   // コールドスタート時に取得した通知タップ情報を保持。
   // ナビゲーション準備が整い次第アラートタブに遷移する。
   const pendingNavRef = useRef<{ notificationId?: string } | null>(null);
@@ -354,7 +368,7 @@ function Root() {
   }
 
   return (
-    <>
+    <WaitingResetProvider resetToken={waitingResetToken}>
       <NavigationContainer
         ref={navigationRef}
         linking={linking}
@@ -389,7 +403,7 @@ function Root() {
         activityId={matchEvent?.activity ?? 'drinking'}
         onClose={dismissMatch}
       />
-    </>
+    </WaitingResetProvider>
   );
 }
 
