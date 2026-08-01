@@ -1,36 +1,44 @@
-// マッチ後オーバーレイを発火するためのリアクション通知監視フック。
-// useNotifications とは独立した listener を持ち、reaction 通知のみを対象に
-// in-memory で「まだ表示していない match」をキューする。
+// マッチ後オーバーレイ (MatchOverlay) を発火させるためのフック。
+// 友達から「かー」リアクションを受け取った時の祝祭演出を出す。
 //
-// 「まだ表示していない」判定 (案C: in-memory dedup):
-//   フック mount 直後の初回 snapshot 群は seenIds に全件登録するだけで trigger
-//   しない (歴史的 reaction を出さない)。以降の docChanges() で type==='added'
-//   の reaction だけをキューに積む。
+// ■ 旧実装の問題 (実質ほとんど表示されていなかった原因)
+//   mount 直後の snapshot を全件 seenIds にシードし、以降の docChanges() の
+//   type==='added' だけを trigger 対象にしていた。その結果:
+//     - アプリを開いている間に届いた reaction → 表示される
+//     - アプリを閉じている間に届いた reaction → 起動時に「表示済み」として
+//       シードされ、二度と表示されない
+//   push 通知は基本的にアプリを閉じている時に届くので、ほぼ全ての
+//   「かー」が演出なしで素通りしていた。
 //
-// 初回 snapshot のレースコンディションについて (検証結果):
-//   Firebase JS SDK の onSnapshot は購読登録後 必ず最初に「初回 snapshot」を
-//   1回以上 fire する仕様。snap.docChanges() は初回時に全件を 'added' として
-//   返すため、もし initializedRef ガード無しに docChanges を回すと歴史的
-//   reaction 全件で overlay が暴発する。
+// ■ 新実装の方針
+//   「未読 (isRead=false) の reaction 通知」を表示対象とする。
+//   起動時でもフォアグラウンド復帰時でも、未読が残っていれば順に表示し、
+//   閉じたタイミングで isRead=true にして二度目を防ぐ。これで
+//     1. push をタップして開いた場合
+//     2. push をタップせず普通に起動 / フォアグラウンド復帰した場合
+//   の両方をカバーできる。onSnapshot はフォアグラウンド復帰時に再同期
+//   されるため、AppState を別途監視する必要はない。
 //
-//   さらに **キャッシュ→サーバーの2段階 fire** が起きうる:
-//     1) ローカルキャッシュ snapshot (snap.metadata.fromCache === true)
-//     2) サーバー反映 snapshot (snap.metadata.fromCache === false)
-//   キャッシュが空 (新規端末) の場合、(1) は空、(2) で初めて全件届く。
-//   この間に新規 reaction が増えると (2) で 'added' として混ざり、判別不可。
+// ■ 二重表示を防ぐ仕組み
+//   isRead=true の書き込みがサーバーに反映されるまでにラグがあるため、
+//   Firestore の状態だけに頼ると同じ通知を複数回キューに積みうる。
+//   queuedIds (in-memory) で一度積んだ ID を記録して弾く。
 //
-//   対策: snap.metadata.fromCache === false を観測するまで初期化完了とみなさず、
-//   各 snapshot の snap.docs を seenIds に毎回シードする。サーバー snapshot を
-//   観測した時点で initializedRef を立て、以降の追加だけを trigger 対象とする。
-//   これによりキャッシュ→サーバーの 2段階 fire でも安全に dedup できる。
-//
-// 端末跨ぎや再起動を跨いだ「未消化 match」の表示は MVP スコープ外。アラート
-// タブには通知カードとして残るため、機能性は損なわれない。
+// ■ 他機能との独立性
+//   - SendOverlay (送信時の演出) とは別コンポーネント・別状態で干渉しない。
+//   - push タップ時の highlightId 遷移とも独立。MatchOverlay は
+//     NavigationContainer の外に描画されるため、アラートタブへの遷移と
+//     同時に発生しても互いを壊さない (演出を閉じるとハイライト済みの
+//     カードが見える)。
+//   - キューは in-memory なので、アラートタブの markAllAsRead が後から
+//     isRead=true にしても表示待ちのイベントは消えない。
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   collection,
+  doc,
   onSnapshot,
   query,
+  updateDoc,
   where,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -41,89 +49,84 @@ export type MatchEvent = {
   senderId: string;
   senderName: string;
   activity: ActivityId;
+  createdAtMs: number;
 };
 
 export function useMatchEvents(currentUserId: string | undefined) {
-  // 表示待ちキュー
+  // 表示待ちキュー。先頭が今表示すべきイベント。
   const [queue, setQueue] = useState<MatchEvent[]>([]);
-  // 既に表示済み or 初回 snapshot で除外済みの id 集合
-  const seenIdsRef = useRef<Set<string>>(new Set());
-  // 初回 snapshot を区別するためのフラグ
-  const initializedRef = useRef(false);
+  // 一度キューに積んだ ID (二重投入防止)
+  const queuedIdsRef = useRef<Set<string>>(new Set());
+  // dismiss から最新のキューを参照するためのミラー
+  const queueRef = useRef<MatchEvent[]>([]);
+
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
 
   useEffect(() => {
     if (!currentUserId) {
       setQueue([]);
-      seenIdsRef.current = new Set();
-      initializedRef.current = false;
+      queuedIdsRef.current = new Set();
       return;
     }
 
-    // NOTE: orderBy('createdAt') を入れると composite index
-    // (receiverId + type + createdAt) が必須になる。未 deploy だと
-    // query が silent fail し マッチオーバーレイが永久に発火しない。
-    // 並び順は dedup ロジックに影響しないため orderBy は外す。
+    // NOTE: 等値フィルタのみの組み合わせなので composite index は不要
+    // (Firestore が単一フィールドインデックスのマージで解決する)。
+    // orderBy を入れると composite index が必須になり、未 deploy 時に
+    // query が silent fail してオーバーレイが永久に出なくなるため、
+    // 並び替えは JS 側で行う。
     const q = query(
       collection(db, 'notifications'),
       where('receiverId', '==', currentUserId),
       where('type', '==', 'reaction'),
+      where('isRead', '==', false),
     );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        // 初期化フェーズ: サーバー反映 snapshot を観測するまで継続
-        // (キャッシュ snapshot だけを見て初期化完了とすると、後続の
-        //  サーバー snapshot で歴史的 reaction が全件 'added' として届き暴発する)
-        if (!initializedRef.current) {
-          // 現時点の docs を全て seenIds にシード
-          snap.docs.forEach((d) => seenIdsRef.current.add(d.id));
-          // サーバー反映済み snapshot を観測したら初期化完了
-          if (!snap.metadata.fromCache) {
-            initializedRef.current = true;
-          }
-          return;
-        }
-        // 初期化後: docChanges() の added だけをキューに追加
         const additions: MatchEvent[] = [];
-        snap.docChanges().forEach((change) => {
-          if (change.type !== 'added') return;
-          const id = change.doc.id;
-          // 二重防御: seenIds に既にあるなら trigger しない
-          // (初期化フェーズでシード済みのものは確実に弾かれる)
-          if (seenIdsRef.current.has(id)) return;
-          seenIdsRef.current.add(id);
-          const data = change.doc.data() as any;
+        snap.docs.forEach((d) => {
+          if (queuedIdsRef.current.has(d.id)) return;
+          queuedIdsRef.current.add(d.id);
+          const data = d.data() as any;
           additions.push({
-            id,
+            id: d.id,
             senderId: data.senderId,
             senderName: data.senderName ?? 'フレンド',
             activity: (data.activity ?? 'drinking') as ActivityId,
+            createdAtMs: data.createdAt?.toMillis?.() ?? 0,
           });
         });
-        if (additions.length > 0) {
-          // createdAt 昇順 (古い順) にして順次表示
-          additions.reverse();
-          setQueue((prev) => [...prev, ...additions]);
-        }
+        if (additions.length === 0) return;
+        // 「最新1件を表示し、閉じたら次の1件」なので新しい順に並べる。
+        // 一気に全部出さず、1件ずつ順番に消化する。
+        additions.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        setQueue((prev) => [...prev, ...additions]);
       },
       (err) => {
         console.error('useMatchEvents onSnapshot error', err);
       },
     );
 
-    return () => {
-      unsub();
-      initializedRef.current = false;
-    };
+    return unsub;
   }, [currentUserId]);
 
   // キュー先頭が現在表示すべきイベント
   const current = queue[0] ?? null;
 
-  // dismiss でキューを進める
+  // 閉じたら既読にして次の1件へ進む。
+  // 既読化に失敗しても表示は前に進める (演出のために操作を止めない)。
+  // firestore.rules は receiver による {isRead, reactedBy} のみの更新を
+  // 許可しているので、isRead だけを書く。
   const dismiss = useCallback(() => {
+    const shown = queueRef.current[0];
     setQueue((prev) => prev.slice(1));
+    if (!shown) return;
+    updateDoc(doc(db, 'notifications', shown.id), { isRead: true }).catch((e) =>
+      console.warn('useMatchEvents: mark as read failed', e),
+    );
   }, []);
 
   return { current, dismiss, queueLength: queue.length };
