@@ -91,8 +91,11 @@
   </a>
 
   <p class="note" id="note">
-    アプリがインストールされている端末で開いてください。<br>
-    (現在 App Store では未公開。テスター招待を受けた方は TestFlight からインストール済のアプリで開けます)
+    アプリが入っていない場合は App Store のページが開きます。<br>
+    TestFlight 版をお使いの方もそのまま開けます。
+  </p>
+  <p class="note">
+    <a id="storeLink" href="https://apps.apple.com/app/id6766822899">App Store で KIBUNYA を見る</a>
   </p>
 
   <footer>© 2026 gokuyou-official</footer>
@@ -120,9 +123,43 @@
       }
 
       var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
+      var APP_STORE_URL = 'https://apps.apple.com/app/id6766822899';
+      // カスタムスキームが「開けなかった」と判断するまでの猶予。
+      // 短すぎると起動が間に合わず誤って App Store に飛ばしてしまい、
+      // 長すぎると未インストールの人を待たせる。
+      var FALLBACK_DELAY = 1200;
+
       appOpenBtn.setAttribute('href', APP_SCHEME_URL);
-      // 自動リダイレクトは行わない (App Store 未公開のため誤遷移防止)。
-      // ユーザーがボタンをタップしたら kibunya:// が発火する。
+
+      // アプリが起動するとこのページはバックグラウンドに回る。
+      // その遷移を捉えられたら「アプリが入っていた」とみなし、
+      // App Store へのフォールバックを取り消す。
+      var leftPage = false;
+      function markLeft() { leftPage = true; }
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) markLeft();
+      });
+      window.addEventListener('pagehide', markLeft);
+      window.addEventListener('blur', markLeft);
+
+      appOpenBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        leftPage = false;
+        var startedAt = Date.now();
+        statusEl.textContent = 'アプリを開いています...';
+
+        window.location.href = APP_SCHEME_URL;
+
+        window.setTimeout(function () {
+          // 既に離脱していた = アプリが開いた
+          if (leftPage || document.hidden) return;
+          // タイマーが大幅に遅れて発火した場合も、いったん別アプリに
+          // 移って戻ってきた可能性が高いので誘導しない。
+          if (Date.now() - startedAt > FALLBACK_DELAY + 1000) return;
+          statusEl.textContent = 'アプリが見つかりません。App Store を開きます...';
+          window.location.href = APP_STORE_URL;
+        }, FALLBACK_DELAY);
+      });
     })();
   </script>
 

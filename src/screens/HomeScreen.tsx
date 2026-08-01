@@ -29,7 +29,7 @@ import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
 
-export default function HomeScreen({ navigation }: any) {
+export default function HomeScreen({ navigation, route }: any) {
   const { currentUser } = useAuth();
   const { profile } = useProfile(currentUser?.uid);
   const { friends } = useFriends(currentUser?.uid);
@@ -125,6 +125,14 @@ export default function HomeScreen({ navigation }: any) {
     setWaiting(false);
   };
 
+  // App.tsx の tabPress リスナーが「気分タブの再タップ」時に
+  // route.params.resetAt を更新する。待機中はそれを取り消し操作として扱い、
+  // 通常画面に戻す。タブが選択済みでも「戻れる」導線をひとつ増やす目的。
+  const resetAt = route?.params?.resetAt;
+  useEffect(() => {
+    if (resetAt) setWaiting(false);
+  }, [resetAt]);
+
   // 表示可能なアクティビティが無い場合 (interests 未設定 or enabled なものが無い)
   if (visibleIds.length === 0) {
     return (
@@ -218,17 +226,34 @@ export default function HomeScreen({ navigation }: any) {
             ]}
           >
             {waiting ? (
-              <Pressable
-                onPress={cancelWaiting}
-                style={({ pressed }) => [
-                  styles.ctaWaiting,
-                  pressed && { opacity: 0.9 },
-                ]}
-              >
-                <Text style={styles.ctaWaitingText}>
-                  待ちますかー {activity.waitEmoji}
-                </Text>
-              </Pressable>
+              // 待機中は「状態表示」と「取り消し操作」を明確に分ける。
+              // 以前は両方が同じ「待ちますかー」ラベルのボタンだったため、
+              // タップすれば取り消せることに気づけなかった。
+              <View style={styles.waitingBlock}>
+                <View style={styles.waitingStatus} pointerEvents="none">
+                  <Text style={styles.waitingStatusText}>
+                    友達の「かー」を待ってます {activity.waitEmoji}
+                  </Text>
+                </View>
+
+                <Pressable
+                  onPress={cancelWaiting}
+                  accessibilityRole="button"
+                  accessibilityLabel="待機を取り消して気分の画面に戻る"
+                  style={({ pressed }) => [
+                    styles.cancelBtn,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                >
+                  <Text style={styles.cancelIcon}>✕</Text>
+                  <View style={styles.cancelLabels}>
+                    <Text style={styles.cancelText}>やめとくー</Text>
+                    <Text style={styles.cancelSub}>
+                      タップで取り消して気分の画面に戻る
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
             ) : (
               <Pressable
                 onPressIn={pressIn}
@@ -250,7 +275,7 @@ export default function HomeScreen({ navigation }: any) {
 
           <Text style={styles.hint}>
             {waiting
-              ? '友達の「かー」を待ってます'
+              ? '下の「気分」タブをもう一度タップしても戻れます'
               : '興味が合う友達に通知が届きます'}
           </Text>
 
@@ -363,7 +388,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   titleWaiting: {
-    marginBottom: 32,
+    // 待機中はこの下に状態カードが入るので、以前ほど余白を空けない
+    marginBottom: 4,
   },
   areaField: {
     width: '100%',
@@ -398,16 +424,55 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  ctaWaiting: {
-    backgroundColor: colors.yamabuki,
-    paddingVertical: 20,
-    borderRadius: 20,
+  waitingBlock: {
+    width: '100%',
+    gap: 12,
+  },
+  // 状態表示: 山吹の縁取りで「光って待っている」感を出す。押せない。
+  waitingStatus: {
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.yamabuki,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
     alignItems: 'center',
   },
-  ctaWaitingText: {
-    color: colors.ai,
-    fontSize: 18,
+  waitingStatusText: {
+    color: colors.yamabuki,
+    fontSize: 15,
     fontWeight: '700',
+  },
+  // 取り消し操作: 朱のベタ塗り = 画面内で唯一の「押せるもの」として立てる。
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: colors.shu,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+  },
+  cancelIcon: {
+    color: colors.cream,
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 24,
+  },
+  cancelLabels: {
+    alignItems: 'flex-start',
+  },
+  cancelText: {
+    color: colors.cream,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  cancelSub: {
+    color: colors.cream,
+    opacity: 0.75,
+    fontSize: 11,
+    marginTop: 2,
   },
   hint: {
     fontSize: 11,

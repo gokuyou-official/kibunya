@@ -86,6 +86,19 @@ function MainTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
+        // 「いきますかー」送信後の待機状態は既に気分タブの中にいるため、
+        // タブを押し直しても画面が変わらず「戻れない」と感じてしまう。
+        // 既にフォーカスされている状態での再タップを合図として
+        // HomeScreen に渡し、待機状態をリセットさせる。
+        // (別タブから来た場合は isFocused() が false なので発火しない =
+        //  タブを往復しただけで待機が消えることはない)
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            if (navigation.isFocused()) {
+              navigation.setParams({ resetAt: Date.now() });
+            }
+          },
+        })}
         options={{
           title: '気分',
           tabBarIcon: ({ focused }) => (
