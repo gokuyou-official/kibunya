@@ -64,11 +64,20 @@ export default function NotificationCard({ notification, onReact }: Props) {
     'フレンド';
 
   // 表示メッセージ
+  //
+  // 本文は「かー」を返したかどうかで変えない。以前は reacted 用に
+  //   `${name}さんの${label}の気分 — かーした`
+  // という別テンプレートを用意していたため、返信後にカード本文が
+  // 「ひぐぼさんのちょい飲みの気分 — かーした」と、日本語として
+  // 意味の通らない連結に見える文字列になっていた。
+  // 対応済みであることは右側の「済👌」バッジ (と緑系の枠色) で表現する。
+  //
+  // NOTE: 旧 reacted テンプレートは "が"→"の" の助詞違いに加えて
+  // エリア表記も落としていたため、「かー」を返すと (新宿) 等が消えていた。
+  // 本文を一本化することでエリアも返信後まで残るようになる。
   let message: string;
   if (isReaction) {
     message = `${safeSenderName}さんが「かー」しました ${activity.matchEmoji}`;
-  } else if (reacted) {
-    message = `${safeSenderName}さんの${activity.label}の気分 — かーした`;
   } else {
     const areaPart = notification.area ? ` (${notification.area})` : '';
     message = `${safeSenderName}さんが${activity.label}の気分${areaPart}`;
