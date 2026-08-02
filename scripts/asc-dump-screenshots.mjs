@@ -18,6 +18,10 @@ const APP_ID = process.env.ASC_APP_ID || '6766822899';
 // 目視判定できる最小限のサイズに抑える (ログ肥大を防ぐ)
 const PREVIEW_WIDTH = Number(process.env.PREVIEW_WIDTH || 300);
 const CHUNK = 200;
+// 絞り込み (未指定なら全件)。バージョンが増えると全件 dump は
+// ログが肥大して扱えなくなるため、対象を 1 枚に絞れるようにする。
+const FILTER_VERSION = (process.env.FILTER_VERSION || '').trim();
+const FILTER_FILE_NAME = (process.env.FILTER_FILE_NAME || '').trim();
 
 const asc = buildAscClient();
 
@@ -49,6 +53,8 @@ function buildPreviewUrl(templateUrl, srcW, srcH, width) {
 
 async function main() {
   console.log(`APP_ID=${APP_ID} PREVIEW_WIDTH=${PREVIEW_WIDTH}`);
+  console.log(`FILTER_VERSION=${FILTER_VERSION || '(全件)'}`);
+  console.log(`FILTER_FILE_NAME=${FILTER_FILE_NAME || '(全件)'}`);
 
   const versionsResp = await get(`/apps/${APP_ID}/appStoreVersions`, {
     'filter[platform]': 'IOS',
@@ -56,6 +62,7 @@ async function main() {
   });
 
   for (const v of versionsResp?.data ?? []) {
+    if (FILTER_VERSION && v.attributes?.versionString !== FILTER_VERSION) continue;
     const locsResp = await get(
       `/appStoreVersions/${v.id}/appStoreVersionLocalizations`,
       { limit: 50 },
@@ -77,6 +84,7 @@ async function main() {
         for (let i = 0; i < shots.length; i++) {
           const s = shots[i];
           const a = s.attributes ?? {};
+          if (FILTER_FILE_NAME && a.fileName !== FILTER_FILE_NAME) continue;
           const asset = a.imageAsset ?? {};
           const url = buildPreviewUrl(
             asset.templateUrl,

@@ -37,6 +37,16 @@ on:
         required: false
         default: ''
         type: string
+      filter_version:
+        description: 'mode=preview のとき: この versionString だけを dump する'
+        required: false
+        default: ''
+        type: string
+      filter_file_name:
+        description: 'mode=preview のとき: この fileName だけを dump する'
+        required: false
+        default: ''
+        type: string
       dry_run:
         description: 'mode=delete のとき: true なら確認のみで削除しない'
         required: true
@@ -105,6 +115,8 @@ jobs:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_APP_ID: '6766822899'
           PREVIEW_WIDTH: '300'
+          FILTER_VERSION: ${{ inputs.filter_version }}
+          FILTER_FILE_NAME: ${{ inputs.filter_file_name }}
         run: node scripts/asc-dump-screenshots.mjs
 
       - name: Delete screenshot
