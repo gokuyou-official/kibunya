@@ -32,6 +32,11 @@ on:
         required: false
         default: ''
         type: string
+      expect_version:
+        description: '削除対象が属する versionString (例 1.0.4)。同名ファイルが各バージョンに存在するため必須級'
+        required: false
+        default: ''
+        type: string
       dry_run:
         description: 'mode=delete のとき: true なら確認のみで削除しない'
         required: true
@@ -110,6 +115,7 @@ jobs:
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           SCREENSHOT_ID: ${{ inputs.screenshot_id }}
           EXPECT_FILE_NAME: ${{ inputs.expect_file_name }}
+          EXPECT_VERSION: ${{ inputs.expect_version }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -o pipefail
@@ -117,6 +123,7 @@ jobs:
             echo "## Delete Screenshot"
             echo ""
             echo "- screenshot_id: \`${SCREENSHOT_ID}\`"
+            echo "- expect_version: \`${EXPECT_VERSION}\`"
             echo "- dry_run: \`${DRY_RUN}\`"
             echo ""
             echo '```'
