@@ -2,6 +2,15 @@
 # このファイルを変更して main に push すると、macOS ローカルビルド +
 # TestFlight 提出 (profile=production, auto_submit=true) が起動する。
 # クラウドビルド (eas-build.yml) は paths-ignore によりこの push では起動しない。
-build-request: 75
-requested-at: 2026-07-23T00:00:00Z
-reason: Build 75 - Apple トークン失効 (5.1.1(v) 必須要件) をアカウント削除に追加
+#
+# ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
+# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない
+# (実際 app.json は "10" のままだが実ビルドは 73/74/76 と進んでいる)。
+build-request: 77
+requested-at: 2026-08-02T00:00:00Z
+reason: |
+  「かー」演出と「待ちますかー」状態まわりの改善をまとめて TestFlight へ。
+  - 2e0aefe MatchOverlay の検知ロジック修正 (未読 reaction を拾う)
+  - bdf4f1c 気分タブ再タップでの待機解除 / 待機中UI改善 / 招待リンク公開済み対応
+  - 1d873ac 取り消しボタン削除 / 「かー」受信での待機自動解除
+  - 91b68da 3時間経過での自動解除 +「キブンじゃないかも？」表示
