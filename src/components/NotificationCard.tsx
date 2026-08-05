@@ -16,6 +16,15 @@ type Props = {
   onReact?: () => Promise<void> | void;
 };
 
+// 通知は 7 日間残る (useNotifications の cleanupOldNotifications) ため、
+// 時刻だけではいつの通知か判別できない。当日は時刻のみ、前日は「昨日」、
+// それ以前は「M/D」を前置する。
+//
+// 判定は経過時間 (24時間差) ではなく暦日の境界で行う。経過時間で判定すると
+// 深夜 1 時に受け取った通知が翌朝 9 時の時点でまだ「今日」扱いのままになり、
+// 実際の日付とずれてしまうため。
+//
+// 保持期間が 7 日なので年跨ぎでも月日だけで一意に読める。年は表示しない。
 function formatTime(ts: any): string {
   try {
     const ms = ts?.toMillis?.() ?? 0;
@@ -23,7 +32,16 @@ function formatTime(ts: any): string {
     const date = new Date(ms);
     const hh = String(date.getHours()).padStart(2, '0');
     const mm = String(date.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+    const time = `${hh}:${mm}`;
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    if (ms >= startOfToday.getTime()) return time;
+    if (ms >= startOfYesterday.getTime()) return `昨日 ${time}`;
+    return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
   } catch {
     return '';
   }
