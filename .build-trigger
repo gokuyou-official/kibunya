@@ -5,22 +5,17 @@
 #
 # ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
 # により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない
-# (実際 app.json は "10" のままだが実ビルドは 76 まで進んでいる)。
+# (実際 app.json は "10" のままだが実ビルドは 82 まで進んでいる)。
 # 一方 CFBundleShortVersionString は app.json の expo.version がそのまま
 # 使われるため、バージョンを上げる時は app.json 側を編集する。
-build-request: 1.0.4 の初回ビルド
-requested-at: 2026-08-02T02:40:00Z
+build-request: 1.0.4 の 2 回目ビルド（Build 82 以降の修正を反映）
+requested-at: 2026-08-07T05:25:14Z
 reason: |
-  1.0.3 は 7/29 に App Store でリリース済みで、Apple がそのバージョンへの
-  新規ビルド受付を締め切っている (altool 90186 "Invalid Pre-Release Train.
-  The train version '1.0.3' is closed for new build submissions")。
-  8/1 のクラウドビルド 77-80 は eas submit が成功を報告したものの、
-  Apple 側の非同期処理で同じ理由により破棄され ASC に存在しない
-  (asc-check: 最新ビルドは 76 / 2026-07-25 アップロード)。
-  そのため version を 1.0.4 に上げて改めて TestFlight へ上げ直す。
+  Build 82 (TestFlight 配信済み) 以降に main へ入った 2 件の修正を取り込み、
+  審査提出用のビルドを作成する。お盆前の一般公開を目標とする。
 
   含まれる修正:
-  - 2e0aefe MatchOverlay の検知ロジック修正 (未読 reaction を拾う)
-  - bdf4f1c 気分タブ再タップでの待機解除 / 待機中UI改善 / 招待リンク公開済み対応
-  - 1d873ac 取り消しボタン削除 / 「かー」受信での待機自動解除
-  - 91b68da 3時間経過での自動解除 +「キブンじゃないかも？」表示
+  - 6525c6e 通知本文の文言を「〇〇さんが{活動}の気分 (エリア)」に一本化
+           （「かー」返信後にエリア表記が消える不具合も同時解消）
+  - f098d22 通知カードに日付表示を追加（当日は時刻のみ / 前日は「昨日」/
+           それ以前は M/D を前置）
