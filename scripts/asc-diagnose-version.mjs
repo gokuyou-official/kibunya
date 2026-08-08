@@ -68,7 +68,11 @@ async function main() {
     flag('build が紐付いていない');
     // 紐付けが可能かどうかを判断できるよう、同じ versionString の
     // 候補ビルドを出す。VALID かつ未期限なら PATCH で紐付けられる。
-    const cands = await get(`/apps/${APP_ID}/builds`, {
+    // NOTE: filter[preReleaseVersion.version] は /apps/{id}/builds では
+    // 400 PARAMETER_ERROR.ILLEGAL になる。/builds に filter[app] を
+    // 添えて叩くのが正しい。
+    const cands = await get('/builds', {
+      'filter[app]': APP_ID,
       'filter[preReleaseVersion.version]': TARGET_VERSION_STRING,
       limit: 20,
     });
@@ -223,15 +227,27 @@ async function main() {
       const ard = findIncluded('ageRatingDeclarations', ardId);
       const aa = ard?.attributes ?? {};
       // 未回答の項目 (null) だけを抜き出す。全項目を並べるとノイズになる。
+      //
+      // ただし以下は null が正常値なので提出ブロックとして扱わない:
+      //   kidsAgeBand              … キッズカテゴリのアプリのみ設定する
+      //   developerAgeRatingInfoUrl… 任意の補足情報 URL
+      // これらを blocker として数えると「埋めなければ出せない」と
+      // 誤解させてしまう。
+      const OPTIONAL_NULL_OK = ['kidsAgeBand', 'developerAgeRatingInfoUrl'];
       const unanswered = Object.entries(aa)
         .filter(([, v]) => v === null || v === undefined)
         .map(([k]) => k);
+      const blocking = unanswered.filter((k) => !OPTIONAL_NULL_OK.includes(k));
       console.log(
         `    年齢レーティング: 回答済み ${Object.keys(aa).length - unanswered.length} 項目 / 未回答 ${unanswered.length} 項目`,
       );
       if (unanswered.length > 0) {
-        console.log(`    未回答: ${unanswered.join(', ')}`);
-        flag(`年齢レーティングに未回答項目が ${unanswered.length} 件ある`);
+        console.log(
+          `    未回答: ${unanswered.map((k) => (OPTIONAL_NULL_OK.includes(k) ? `${k}(任意)` : k)).join(', ')}`,
+        );
+      }
+      if (blocking.length > 0) {
+        flag(`年齢レーティングに必須の未回答項目が ${blocking.length} 件ある: ${blocking.join(', ')}`);
       }
     } else {
       flag('ageRatingDeclaration が未作成');
