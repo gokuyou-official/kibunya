@@ -89,13 +89,17 @@ export function useFriends(currentUserId: string | undefined) {
     async (friendId: string) => {
       if (!currentUserId || !friendId || currentUserId === friendId) return;
       try {
+        // ⚠️ merge: true は必須。理由は inviteLink.ts の同処理のコメント参照
+        // (merge なしだと既存の active が消え、相手側は rules で拒否される)。
         await setDoc(
           doc(db, 'friends', currentUserId, 'friendsList', friendId),
           { addedAt: serverTimestamp() },
+          { merge: true },
         );
         await setDoc(
           doc(db, 'friends', friendId, 'friendsList', currentUserId),
           { addedAt: serverTimestamp() },
+          { merge: true },
         );
       } catch (e) {
         console.error('addFriend error', e);

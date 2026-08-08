@@ -43,13 +43,24 @@ export async function handleInviteLink(
     const friendName = (friendSnap.data() as any)?.name ?? 'フレンド';
 
     // 双方向フレンド登録
+    //
+    // ⚠️ merge: true は必須。merge なしの setDoc はドキュメント全体の置換で、
+    // 既存の active (通知トグル) が消える。active は未定義だと有効扱い
+    // (useFriends.ts の active !== false) なので、ミュートが黙って解除される。
+    // 招待リンクは何度でも踏めるため、実際に起きる。
+    //
+    // また相手側は firestore.rules 上 addedAt しか触れない
+    // (allow update の hasOnly(['addedAt']))。merge なしだと active の削除が
+    // affectedKeys に乗って permission-denied になる。
     await setDoc(
       doc(db, 'friends', currentUserId, 'friendsList', friendId),
       { addedAt: serverTimestamp() },
+      { merge: true },
     );
     await setDoc(
       doc(db, 'friends', friendId, 'friendsList', currentUserId),
       { addedAt: serverTimestamp() },
+      { merge: true },
     );
 
     Alert.alert('友達になりました', `${friendName}さんと友達になりました`);

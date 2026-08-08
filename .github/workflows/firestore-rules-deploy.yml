@@ -63,6 +63,24 @@ jobs:
           node-version: 22
       - run: npm ci
 
+      # ★ ルールの回帰テスト。ここが落ちたらデプロイステップまで到達しない
+      #   (後続に if: success() 相当の依存があるため)。
+      #   テストを通らないルールを本番に出さないための関門。
+      #   dry_run でも必ず実行する (壊れたルールを早期に検出するため)。
+      - name: Test firestore rules (emulator)
+        run: |
+          set -euo pipefail
+          cd test/rules
+          npm install --no-audit --no-fund
+          {
+            echo "## Rules tests"
+            echo ""
+            echo '```'
+            npx --yes firebase-tools@latest emulators:exec \
+              --only firestore --project demo-kibunya "node rules.test.mjs"
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Fetch rules BEFORE
         env:
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
