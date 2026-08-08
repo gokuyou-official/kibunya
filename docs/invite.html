@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>招待リンク | KIBUNYA</title>
+  <style>
+    :root {
+      --ai: #1A2E55;
+      --yamabuki: #F5C518;
+      --shu: #E8391F;
+      --white: #f9f5ee;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--ai);
+      color: var(--white);
+      font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .emoji {
+      font-size: 84px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--yamabuki);
+      margin-bottom: 8px;
+      letter-spacing: 0.08em;
+    }
+    .sub {
+      font-size: 14px;
+      opacity: 0.7;
+      line-height: 1.7;
+      margin-bottom: 36px;
+      max-width: 320px;
+    }
+    .status {
+      font-size: 13px;
+      opacity: 0.55;
+      margin-bottom: 28px;
+      min-height: 1.2em;
+    }
+    .btn {
+      display: inline-block;
+      background: var(--shu);
+      color: var(--white);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 16px;
+      margin-bottom: 12px;
+      min-width: 240px;
+    }
+    .note {
+      font-size: 12px;
+      opacity: 0.5;
+      max-width: 320px;
+      line-height: 1.6;
+      margin-top: 8px;
+    }
+    a { color: var(--yamabuki); text-decoration: none; }
+    footer {
+      position: fixed;
+      bottom: 16px;
+      font-size: 11px;
+      opacity: 0.35;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="emoji">🍺</div>
+  <h1>KIBUNYA</h1>
+  <p class="sub">
+    招待リンクを受け取りました。<br>
+    下のボタンをタップしてアプリを開いてください。
+  </p>
+  <p class="status" id="status">&nbsp;</p>
+
+  <a id="appOpenBtn" class="btn" href="#">
+    アプリを開く
+  </a>
+
+  <p class="note" id="note">
+    アプリが入っていない場合は App Store のページが開きます。<br>
+    TestFlight 版をお使いの方もそのまま開けます。
+  </p>
+  <p class="note">
+    <a id="storeLink" href="https://apps.apple.com/app/id6766822899">App Store で KIBUNYA を見る</a>
+  </p>
+
+  <footer>© 2026 gokuyou-official</footer>
+
+  <script>
+    (function () {
+      // uid を抽出: パス '/invite/{uid}' を優先、なければクエリ '?uid=xxx'
+      var uid = null;
+      var pathMatch = location.pathname.match(/[/]invite[/]([^/?#]+)/);
+      if (pathMatch && pathMatch[1]) {
+        uid = decodeURIComponent(pathMatch[1]);
+      } else {
+        var params = new URLSearchParams(location.search);
+        var q = params.get('uid');
+        if (q) uid = q;
+      }
+
+      var statusEl = document.getElementById('status');
+      var appOpenBtn = document.getElementById('appOpenBtn');
+
+      if (!uid) {
+        statusEl.textContent = '招待リンクが正しくありません';
+        appOpenBtn.style.display = 'none';
+        return;
+      }
+
+      var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
+      var APP_STORE_URL = 'https://apps.apple.com/app/id6766822899';
+      // カスタムスキームが「開けなかった」と判断するまでの猶予。
+      // 短すぎると起動が間に合わず誤って App Store に飛ばしてしまい、
+      // 長すぎると未インストールの人を待たせる。
+      var FALLBACK_DELAY = 1200;
+
+      appOpenBtn.setAttribute('href', APP_SCHEME_URL);
+
+      // アプリが起動するとこのページはバックグラウンドに回る。
+      // その遷移を捉えられたら「アプリが入っていた」とみなし、
+      // App Store へのフォールバックを取り消す。
+      var leftPage = false;
+      function markLeft() { leftPage = true; }
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) markLeft();
+      });
+      window.addEventListener('pagehide', markLeft);
+      window.addEventListener('blur', markLeft);
+
+      appOpenBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        leftPage = false;
+        var startedAt = Date.now();
+        statusEl.textContent = 'アプリを開いています...';
+
+        window.location.href = APP_SCHEME_URL;
+
+        window.setTimeout(function () {
+          // 既に離脱していた = アプリが開いた
+          if (leftPage || document.hidden) return;
+          // タイマーが大幅に遅れて発火した場合も、いったん別アプリに
+          // 移って戻ってきた可能性が高いので誘導しない。
+          if (Date.now() - startedAt > FALLBACK_DELAY + 1000) return;
+          statusEl.textContent = 'アプリが見つかりません。App Store を開きます...';
+          window.location.href = APP_STORE_URL;
+        }, FALLBACK_DELAY);
+      });
+    })();
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,21 @@
+# eas-local-build.yml 起動用マーカーファイル。
+# このファイルを変更して main に push すると、macOS ローカルビルド +
+# TestFlight 提出 (profile=production, auto_submit=true) が起動する。
+# クラウドビルド (eas-build.yml) は paths-ignore によりこの push では起動しない。
+#
+# ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
+# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない
+# (実際 app.json は "10" のままだが実ビルドは 82 まで進んでいる)。
+# 一方 CFBundleShortVersionString は app.json の expo.version がそのまま
+# 使われるため、バージョンを上げる時は app.json 側を編集する。
+build-request: 1.0.4 の 2 回目ビルド（Build 82 以降の修正を反映）
+requested-at: 2026-08-07T05:25:14Z
+reason: |
+  Build 82 (TestFlight 配信済み) 以降に main へ入った 2 件の修正を取り込み、
+  審査提出用のビルドを作成する。お盆前の一般公開を目標とする。
+
+  含まれる修正:
+  - 6525c6e 通知本文の文言を「〇〇さんが{活動}の気分 (エリア)」に一本化
+           （「かー」返信後にエリア表記が消える不具合も同時解消）
+  - f098d22 通知カードに日付表示を追加（当日は時刻のみ / 前日は「昨日」/
+           それ以前は M/D を前置）

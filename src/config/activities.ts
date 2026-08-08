@@ -12,6 +12,8 @@ export type ActivityDef = {
   sendCopy: string;
   // 待機コピー
   waitCopy: string;
+  // MVP フィーチャーフラグ: false のものはUIから一切露出しない (v1.1で順次有効化)
+  enabled: boolean;
 };
 
 export const ACTIVITIES: ActivityDef[] = [
@@ -21,7 +23,8 @@ export const ACTIVITIES: ActivityDef[] = [
     waitEmoji: '🍺',
     matchEmoji: '🍻',
     sendCopy: 'ちょい飲みの気分？',
-    waitCopy: '誘ってないから大丈夫。気分を置いておくだけ。',
+    waitCopy: '誘ってないけど知っている',
+    enabled: true,
   },
   {
     id: 'sauna',
@@ -30,6 +33,7 @@ export const ACTIVITIES: ActivityDef[] = [
     matchEmoji: '♨️',
     sendCopy: 'サウナの気分？',
     waitCopy: '整いたいだけ。誰かが来たら一緒に整う。',
+    enabled: false,
   },
   {
     id: 'lunch',
@@ -38,6 +42,7 @@ export const ACTIVITIES: ActivityDef[] = [
     matchEmoji: '🍽️',
     sendCopy: 'ランチの気分？',
     waitCopy: 'お腹すいた。誰かと食べたい気分。',
+    enabled: false,
   },
   {
     id: 'mahjong',
@@ -46,9 +51,18 @@ export const ACTIVITIES: ActivityDef[] = [
     matchEmoji: '💸',
     sendCopy: '麻雀の気分？',
     waitCopy: '卓を囲みたいだけ。誰か来たら打つ。',
+    enabled: false,
   },
 ];
 
 export function getActivity(id: ActivityId | string | undefined): ActivityDef {
   return ACTIVITIES.find((a) => a.id === id) ?? ACTIVITIES[0];
+}
+
+export function getEnabledActivities(): ActivityDef[] {
+  return ACTIVITIES.filter((a) => a.enabled);
+}
+
+export function getEnabledActivityIds(): ActivityId[] {
+  return getEnabledActivities().map((a) => a.id);
 }

@@ -9,6 +9,7 @@ import {
   Share,
   Alert,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
@@ -18,7 +19,18 @@ import { generateInviteLink } from '../utils/inviteLink';
 
 export default function FriendsScreen() {
   const { currentUser, signOut } = useAuth();
-  const { friends, loading } = useFriends(currentUser?.uid);
+  const { friends, loading, setFriendActive } = useFriends(currentUser?.uid);
+
+  const handleToggle = useCallback(
+    async (friendId: string, nextActive: boolean) => {
+      try {
+        await setFriendActive(friendId, nextActive);
+      } catch (e: any) {
+        Alert.alert('更新できませんでした', e?.message ?? '');
+      }
+    },
+    [setFriendActive],
+  );
 
   const handleInvite = useCallback(async () => {
     if (!currentUser) return;
@@ -32,20 +44,44 @@ export default function FriendsScreen() {
     }
   }, [currentUser]);
 
-  const renderItem = ({ item }: { item: Friend }) => (
-    <View style={styles.row}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{item.name.slice(0, 1)}</Text>
+  const renderItem = ({ item }: { item: Friend }) => {
+    const inactive = !item.active;
+    return (
+      <View style={[styles.row, inactive && styles.rowInactive]}>
+        <View style={[styles.avatar, inactive && styles.avatarInactive]}>
+          <Text style={[styles.avatarText, inactive && styles.textInactive]}>
+            {item.name.slice(0, 1)}
+          </Text>
+        </View>
+        <Text style={[styles.name, inactive && styles.textInactive]}>
+          {item.name}
+        </Text>
+        <View
+          style={[
+            styles.dot,
+            {
+              backgroundColor: inactive
+                ? colors.offline
+                : item.isOnline
+                  ? colors.online
+                  : colors.offline,
+            },
+          ]}
+        />
+        <Switch
+          value={item.active}
+          onValueChange={(v) => handleToggle(item.id, v)}
+          // ON: ブランドのゴールド (yamabuki)。ブランド統一感を保ちつつ、
+          //     online dot の緑との視覚衝突も避けられる。
+          // OFF: cardBorder (半透明クリーム)。背景に馴染ませる。
+          // thumb は両 OS とも明るめ (cream) で常に視認できるように。
+          trackColor={{ false: colors.cardBorder, true: colors.yamabuki }}
+          thumbColor={colors.cream}
+          ios_backgroundColor={colors.cardBorder}
+        />
       </View>
-      <Text style={styles.name}>{item.name}</Text>
-      <View
-        style={[
-          styles.dot,
-          { backgroundColor: item.isOnline ? colors.online : colors.offline },
-        ]}
-      />
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -61,6 +97,8 @@ export default function FriendsScreen() {
           <Text style={styles.inviteText}>招待する</Text>
         </Pressable>
       </View>
+
+      <Text style={styles.hint}>オンの友達に気分が届きます</Text>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.shu} />
@@ -121,6 +159,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  hint: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
   list: {
     paddingHorizontal: 16,
     paddingBottom: 24,
@@ -137,6 +181,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 12,
   },
+  rowInactive: {
+    opacity: 0.5,
+  },
   avatar: {
     width: 36,
     height: 36,
@@ -145,9 +192,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  avatarInactive: {
+    backgroundColor: colors.cardBorder,
+  },
   avatarText: {
     color: colors.ai,
     fontWeight: '700',
+  },
+  textInactive: {
+    color: colors.textMuted,
   },
   name: {
     flex: 1,

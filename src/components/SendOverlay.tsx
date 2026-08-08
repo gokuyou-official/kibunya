@@ -43,26 +43,22 @@ export default function SendOverlay({ visible, onClose, activityId }: Props) {
     }
   }, [visible, opacity, scale]);
 
+  // ⚠️ close は即 onClose() で Modal を unmount させる。
+  // 旧実装の Animated.timing → callback パターンは fade-out 中 (180ms) に
+  // 透明な Animated.View が全画面のタッチを奪い、stuck すると永続的に
+  // タブバーが反応しないバグの原因になっていた (MatchOverlay と同一現象)。
+  // 退場アニメは Modal 標準の animationType="fade" に委譲。
   const handleClose = () => {
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start(() => {
-      onClose();
-    });
+    onClose();
   };
 
   return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={handleClose}>
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
       <Animated.View style={[styles.backdrop, { opacity }]}>
         <Animated.View style={[styles.content, { transform: [{ scale }] }]}>
           <Text style={styles.emoji}>{activity.waitEmoji}</Text>
           <Text style={styles.title}>待ちますかー</Text>
-          <Text style={styles.sub}>
-            気分、置いておきました。{'\n'}
-            興味が合う友達に通知が届きます。
-          </Text>
+          <Text style={styles.sub}>友達に届きました</Text>
           <Pressable onPress={handleClose} style={styles.closeBtn}>
             <Text style={styles.closeText}>とじる</Text>
           </Pressable>

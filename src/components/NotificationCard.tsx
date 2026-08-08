@@ -1,5 +1,5 @@
 // 通知カード(v2: activity別絵文字 + 「済👌」状態)
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,15 @@ type Props = {
   onReact?: () => Promise<void> | void;
 };
 
+// 通知は 7 日間残る (useNotifications の cleanupOldNotifications) ため、
+// 時刻だけではいつの通知か判別できない。当日は時刻のみ、前日は「昨日」、
+// それ以前は「M/D」を前置する。
+//
+// 判定は経過時間 (24時間差) ではなく暦日の境界で行う。経過時間で判定すると
+// 深夜 1 時に受け取った通知が翌朝 9 時の時点でまだ「今日」扱いのままになり、
+// 実際の日付とずれてしまうため。
+//
+// 保持期間が 7 日なので年跨ぎでも月日だけで一意に読める。年は表示しない。
 function formatTime(ts: any): string {
   try {
     const ms = ts?.toMillis?.() ?? 0;
@@ -23,7 +32,16 @@ function formatTime(ts: any): string {
     const date = new Date(ms);
     const hh = String(date.getHours()).padStart(2, '0');
     const mm = String(date.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
+    const time = `${hh}:${mm}`;
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    if (ms >= startOfToday.getTime()) return time;
+    if (ms >= startOfYesterday.getTime()) return `昨日 ${time}`;
+    return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
   } catch {
     return '';
   }
@@ -31,30 +49,56 @@ function formatTime(ts: any): string {
 
 export default function NotificationCard({ notification, onReact }: Props) {
   const [busy, setBusy] = useState(false);
+  // ⚠️ 連打防止は state ではなく ref で同期的に行う。
+  // state は setBusy → 次 render まで反映されないため、連打すると 1 回目の
+  // setBusy(true) が反映される前に 2 回目の handlePress が busy=false を
+  // 見て通過してしまい「かー」が複数送信される (実際に発生していた)。
+  const busyRef = useRef(false);
   const isReaction = notification.type === 'reaction';
   const activity = getActivity(notification.activity);
   const reacted = !!notification.reactedBy;
+  // 未読 highlight (黄色 bar) は isRead=false かつ未 react の時のみ。
   const unread = !notification.isRead && !reacted && !isReaction;
+  // 「かー」ボタンの表示条件は reactedBy / isReaction だけに依存する。
+  // isRead が true でも (= アラートタブを「見た」後でも) reacted でなければ
+  // ボタンは押せる状態のままにする。
+  const canReact = !reacted && !isReaction;
 
   const handlePress = async () => {
-    if (busy || !onReact) return;
+    if (busyRef.current || !onReact) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await onReact();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
+  // senderName 安全フォールバック (古いデータで空文字が混ざっている可能性)
+  const safeSenderName =
+    (typeof notification.senderName === 'string' && notification.senderName.trim()) ||
+    'フレンド';
+
   // 表示メッセージ
+  //
+  // 本文は「かー」を返したかどうかで変えない。以前は reacted 用に
+  //   `${name}さんの${label}の気分 — かーした`
+  // という別テンプレートを用意していたため、返信後にカード本文が
+  // 「ひぐぼさんのちょい飲みの気分 — かーした」と、日本語として
+  // 意味の通らない連結に見える文字列になっていた。
+  // 対応済みであることは右側の「済👌」バッジ (と緑系の枠色) で表現する。
+  //
+  // NOTE: 旧 reacted テンプレートは "が"→"の" の助詞違いに加えて
+  // エリア表記も落としていたため、「かー」を返すと (新宿) 等が消えていた。
+  // 本文を一本化することでエリアも返信後まで残るようになる。
   let message: string;
   if (isReaction) {
-    message = `${notification.senderName}さんが「かー」しました ${activity.matchEmoji}`;
-  } else if (reacted) {
-    message = `${notification.senderName}さんの${activity.label}の気分 — かーした`;
+    message = `${safeSenderName}さんが「かー」しました ${activity.matchEmoji}`;
   } else {
     const areaPart = notification.area ? ` (${notification.area})` : '';
-    message = `${notification.senderName}さんが${activity.label}の気分${areaPart}`;
+    message = `${safeSenderName}さんが${activity.label}の気分${areaPart}`;
   }
 
   return (
@@ -65,24 +109,37 @@ export default function NotificationCard({ notification, onReact }: Props) {
         reacted && styles.cardDone,
       ]}
     >
-      {unread && <View style={styles.bar} />}
+      {/*
+        左端のカラーバー (幅 4px) で種類を視覚的に判別する。
+        - kibun (受信した気分 / 誘われた側): 朱 (shu)
+        - reaction (自分への「かー」返答):    金 (yamabuki)
+        unread 状態に関わらず常時表示。未読 highlight は cardUnread の
+        背景色で別途表現する。
+      */}
+      <View
+        style={[
+          styles.bar,
+          { backgroundColor: isReaction ? colors.yamabuki : colors.shu },
+        ]}
+      />
       <View style={styles.emojiWrap}>
         <Text style={styles.emojiText}>
           {isReaction || reacted ? activity.matchEmoji : activity.waitEmoji}
         </Text>
       </View>
       <View style={styles.body}>
-        <Text style={styles.name}>{notification.senderName}</Text>
+        <Text style={styles.name}>{safeSenderName}</Text>
         <Text style={styles.message}>{message}</Text>
         <Text style={styles.time}>{formatTime(notification.createdAt)}</Text>
       </View>
-      {unread ? (
+      {canReact ? (
         <Pressable
           onPress={handlePress}
           disabled={busy}
           style={({ pressed }) => [
             styles.reactBtn,
             pressed && { opacity: 0.7 },
+            busy && { opacity: 0.6 },
           ]}
         >
           {busy ? (
@@ -130,8 +187,8 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    width: 3,
-    backgroundColor: colors.yamabuki,
+    width: 4,
+    // backgroundColor は inline で type に応じて上書きする
   },
   emojiWrap: {
     width: 44,

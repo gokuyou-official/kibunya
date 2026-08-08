@@ -1,0 +1,88 @@
+name: ASC Send TestFlight Invitation
+
+# 指定した BetaTester に TestFlight 招待メールを送信する。
+# 招待メールは Apple から (noreply@email.apple.com) 自動配信される。
+#
+# 必須 secrets:
+#   - ASC_ISSUER_ID
+#   - ASC_KEY_ID
+#   - ASC_P8_KEY
+#
+# 安全策: dry_run はデフォルト true。実送信は明示的に false を選んだときのみ。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (送信しない)。false で実送信。'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      beta_tester_ids:
+        description: '招待を送る BetaTester ID (カンマ区切りで複数可)'
+        required: true
+        default: '90e8790f-537a-40f6-8499-77222e2f88b1'
+        type: string
+      beta_group_id:
+        description: '所属 BetaGroup ID (検証ログ用。招待 API 自体は不要)'
+        required: false
+        default: '2bf5d6c1-f162-4b7a-ae30-26c69d6635bc'
+        type: string
+
+jobs:
+  invite:
+    name: Send TestFlight invitation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run invite script
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          ASC_BUNDLE_ID: 'com.gokuyouofficial.kibunya'
+          DRY_RUN: ${{ inputs.dry_run }}
+          BETA_TESTER_IDS: ${{ inputs.beta_tester_ids }}
+          BETA_GROUP_ID: ${{ inputs.beta_group_id }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Send TestFlight Invitation"
+            echo ""
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo "- beta_tester_ids: \`${BETA_TESTER_IDS}\`"
+            echo "- beta_group_id: \`${BETA_GROUP_ID:-(none)}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-invite-testers.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
