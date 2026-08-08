@@ -1,0 +1,159 @@
+name: Firestore Rules Deploy
+
+# firestore.rules を本番 (kibunyapjt) に反映する。
+#
+# ■ トリガー
+#   1. main への push で firestore.rules が変わった時 (自動反映)
+#      ★ branches を main に限定している。これを外すと feature ブランチへの
+#        push で本番ルールが書き換わる。絶対に消さないこと。
+#   2. workflow_dispatch (手動)。dry_run=true (既定) なら比較のみでデプロイしない。
+#
+# ■ 対象
+#   firestore:rules のみ。functions / hosting / firestore:indexes は含めない。
+#   (--only firestore:rules を明示。`--only firestore` にすると indexes も
+#    対象に入ってしまうので絶対に書き換えないこと)
+#
+# ■ 前後比較
+#   デプロイ前と後に配信中のルールを取得してログに出し、diff を表示する。
+#   デプロイ後はリポジトリの firestore.rules と一致することを検証し、
+#   一致しなければワークフローを失敗させる。
+#
+# 必須 secret: FIREBASE_SERVICE_ACCOUNT_KEY
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'firestore.rules'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true なら比較のみでデプロイしない'
+        type: boolean
+        default: true
+
+concurrency:
+  group: firestore-rules-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy firestore rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_PROJECT_ID: 'kibunyapjt'
+      # workflow_dispatch のときだけ入力を見る。push は常に本番反映 (dry_run=false)。
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEY:-}" ]; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_KEY is not set"
+            exit 1
+          fi
+          echo "event=${{ github.event_name }} dry_run=${DRY_RUN}"
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Fetch rules BEFORE
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          OUT_FILE: /tmp/before.rules
+        run: |
+          set -euo pipefail
+          {
+            echo "## BEFORE (配信中)"
+            echo ""
+            echo '```'
+            node scripts/firebase-get-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Diff (deployed vs repo)
+        run: |
+          set -uo pipefail
+          {
+            echo "## DIFF (左: 配信中 / 右: リポジトリ)"
+            echo ""
+            echo '```diff'
+            diff -u /tmp/before.rules firestore.rules || true
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if diff -q /tmp/before.rules firestore.rules >/dev/null; then
+            echo "NO_CHANGE=true" >> "$GITHUB_ENV"
+            echo "配信中のルールとリポジトリは既に一致している"
+          else
+            echo "NO_CHANGE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Stop here (dry run)
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: |
+          echo "dry_run=true のためデプロイしない。" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # 認証は GOOGLE_APPLICATION_CREDENTIALS 経由。firebase-tools が
+      # サービスアカウントを直接読む。ログイン用トークンは使わない。
+      - name: Write service account file
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_KEY" > /tmp/sa.json
+          chmod 600 /tmp/sa.json
+
+      - name: Deploy (firestore:rules only)
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+        run: |
+          set -euo pipefail
+          npx --yes firebase-tools@latest deploy \
+            --only firestore:rules \
+            --project "$FIREBASE_PROJECT_ID" \
+            --non-interactive
+
+      - name: Fetch rules AFTER
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          OUT_FILE: /tmp/after.rules
+        run: |
+          set -euo pipefail
+          {
+            echo "## AFTER (配信中)"
+            echo ""
+            echo '```'
+            node scripts/firebase-get-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify deployed == repo
+        if: ${{ env.DRY_RUN != 'true' }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## BEFORE → AFTER"
+            echo ""
+            echo '```diff'
+            diff -u /tmp/before.rules /tmp/after.rules || true
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if ! diff -q /tmp/after.rules firestore.rules >/dev/null; then
+            echo "::error::デプロイ後の配信ルールがリポジトリの firestore.rules と一致しない"
+            diff -u /tmp/after.rules firestore.rules || true
+            exit 1
+          fi
+          echo "✓ 配信中のルールがリポジトリと一致した"
+
+      - name: Cleanup credentials
+        if: always()
+        run: rm -f /tmp/sa.json

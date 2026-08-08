@@ -16,10 +16,15 @@
 // 必須 env: FIREBASE_SERVICE_ACCOUNT_KEY (Service Account JSON 本文)
 // 任意 env: FIREBASE_PROJECT_ID (既定 kibunyapjt)
 //           RELEASE_NAME       (既定 cloud.firestore)
+//           OUT_FILE           指定すると取得した本文をそのファイルに保存する。
+//                              デプロイ前後の diff を取るために使う。
+//                              (Firebase に対しては依然として GET のみ)
+import fs from 'node:fs';
 import jwt from 'jsonwebtoken';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'kibunyapjt';
 const RELEASE_NAME = process.env.RELEASE_NAME || 'cloud.firestore';
+const OUT_FILE = (process.env.OUT_FILE || '').trim();
 const SA_JSON_STR = process.env.FIREBASE_SERVICE_ACCOUNT_KEY ?? '';
 
 if (!SA_JSON_STR) {
@@ -122,6 +127,17 @@ async function main() {
     process.stdout.write(f.content.endsWith('\n') ? f.content : `${f.content}\n`);
     console.log(`===RULES-END===`);
     console.log(`(${f.content.length} 文字 / ${f.content.split('\n').length} 行)`);
+  }
+
+  if (OUT_FILE) {
+    // firestore.rules は 1 ファイル構成の前提。複数あれば連結せず先頭を使い、
+    // 想定外として警告する (黙って混ぜると diff が意味を失うため)。
+    if (files.length !== 1) {
+      console.log(`::warning::ファイルが ${files.length} 個ある。先頭のみ OUT_FILE に保存する`);
+    }
+    const content = files[0]?.content ?? '';
+    fs.writeFileSync(OUT_FILE, content.endsWith('\n') ? content : `${content}\n`);
+    console.log(`\nOUT_FILE に保存: ${OUT_FILE}`);
   }
 
   header('完了');
