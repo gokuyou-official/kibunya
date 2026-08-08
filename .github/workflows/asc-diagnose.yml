@@ -7,8 +7,16 @@ on:
       version_string:
         description: '診断対象バージョン'
         required: true
-        default: '1.0.3'
+        default: '1.0.4'
         type: string
+      run_fix:
+        description: 'true にすると診断前に asc-fix-readiness.mjs で contentRights / category を書き換える。既定は false (読み取り専用)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   diagnose:
@@ -36,7 +44,11 @@ jobs:
           node-version: 22
       - run: npm ci
 
+      # ⚠️ 書き込みステップ。既定では実行しない。
+      # 「何が不足しているかだけ知りたい」用途で誤って ASC の設定を
+      # 書き換えてしまわないよう、明示的に run_fix=true を選んだ時だけ走らせる。
       - name: Fix readiness (contentRights / category)
+        if: ${{ inputs.run_fix == 'true' }}
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

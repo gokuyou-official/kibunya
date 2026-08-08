@@ -66,6 +66,23 @@ async function main() {
   const build = buildRel?.data;
   if (!build) {
     flag('build が紐付いていない');
+    // 紐付けが可能かどうかを判断できるよう、同じ versionString の
+    // 候補ビルドを出す。VALID かつ未期限なら PATCH で紐付けられる。
+    const cands = await get(`/apps/${APP_ID}/builds`, {
+      'filter[preReleaseVersion.version]': TARGET_VERSION_STRING,
+      limit: 20,
+    });
+    const list = cands?.data ?? [];
+    console.log(`  紐付け候補 (preReleaseVersion=${TARGET_VERSION_STRING}): ${list.length}件`);
+    for (const c of list) {
+      const ca = c.attributes ?? {};
+      console.log(
+        `    build ${ca.version} id=${c.id} processingState=${ca.processingState} expired=${ca.expired} uploaded=${ca.uploadedDate}`,
+      );
+    }
+    if (list.some((c) => c.attributes?.processingState === 'VALID' && !c.attributes?.expired)) {
+      console.log('  → VALID かつ未期限の候補があるので紐付けは可能');
+    }
   } else {
     console.log(`  build id=${build.id}`);
     const b = await get(`/builds/${build.id}`);
@@ -99,6 +116,18 @@ async function main() {
     if (!a.keywords) flag(`locale=${a.locale} の keywords が空`);
     if (!a.supportUrl) flag(`locale=${a.locale} の supportUrl が空`);
 
+    // リリースノートは本文をそのまま出す。空かどうかだけでは
+    // 「何を書くか決める」判断材料にならないため。
+    console.log(`    --- whatsNew (${a.locale}) ---`);
+    if (a.whatsNew) {
+      for (const line of String(a.whatsNew).split('\n')) console.log(`    | ${line}`);
+    } else {
+      console.log('    | (空)');
+      // 新規アプリの初回バージョンでは whatsNew は不要だが、
+      // 2 回目以降のバージョンでは実質必須。
+      flag(`locale=${a.locale} の whatsNew (リリースノート) が空`);
+    }
+
     // スクリーンショット
     const ssResp = await get(
       `/appStoreVersionLocalizations/${l.id}/appScreenshotSets`,
@@ -112,13 +141,20 @@ async function main() {
         const shots = await get(`/appScreenshotSets/${s.id}/appScreenshots`, {
           limit: 10,
         });
-        const n = shots?.data?.length ?? 0;
-        const states = (shots?.data ?? [])
-          .map((x) => x.attributes?.assetDeliveryState?.state)
-          .join(',');
+        const list = shots?.data ?? [];
+        const n = list.length;
         console.log(
-          `    screenshotSet ${s.attributes?.screenshotDisplayType}: ${n}枚 [${states}]`,
+          `    screenshotSet ${s.attributes?.screenshotDisplayType}: ${n}枚`,
         );
+        // 配列順 = App Store 上の表示順。ファイル名まで出さないと
+        // 「どれが何枚目か」を人が確認できない。
+        list.forEach((x, i) => {
+          const xa = x.attributes ?? {};
+          const asset = xa.imageAsset ?? {};
+          console.log(
+            `      ${i + 1}. ${xa.fileName} (${asset.width}x${asset.height}) ${xa.assetDeliveryState?.state} id=${x.id}`,
+          );
+        });
         if (n === 0) {
           flag(`${a.locale} / ${s.attributes?.screenshotDisplayType} が 0 枚`);
         }
@@ -126,14 +162,80 @@ async function main() {
     }
   }
 
+  header('3.5 審査用連絡先 (appStoreReviewDetail) と広告識別子 (IDFA)');
+  const rd = await get(`/appStoreVersions/${vId}/appStoreReviewDetail`);
+  if (!rd?.data) {
+    flag('appStoreReviewDetail が未作成 (審査用連絡先が未入力)');
+  } else {
+    const ra = rd.data.attributes ?? {};
+    console.log(
+      `  contact: ${ra.contactFirstName ?? '★空'} ${ra.contactLastName ?? '★空'} / tel=${ra.contactPhone ?? '★空'} / email=${ra.contactEmail ?? '★空'}`,
+    );
+    console.log(
+      `  demoAccountRequired=${ra.demoAccountRequired} demoAccountName=${ra.demoAccountName ? 'あり' : '(空)'}`,
+    );
+    console.log(`  notes=${ra.notes ? `${String(ra.notes).length}文字` : '(空)'}`);
+    for (const [k, label] of [
+      ['contactFirstName', '審査用連絡先の名'],
+      ['contactLastName', '審査用連絡先の姓'],
+      ['contactPhone', '審査用連絡先の電話番号'],
+      ['contactEmail', '審査用連絡先のメール'],
+    ]) {
+      if (!ra[k]) flag(`${label} が空`);
+    }
+    // ログイン必須アプリでデモアカウント未提供は差し戻しの定番。
+    if (ra.demoAccountRequired && !ra.demoAccountName) {
+      flag('demoAccountRequired=true なのにデモアカウント情報が空');
+    }
+  }
+
+  // IDFA (広告識別子) の申告。新しい ASC では App Privacy 側に統合され、
+  // この関連が 404 を返すことがある。その場合は「この API では判定不可」
+  // であって「未入力」ではないので、区別して出す。
+  const idfa = await get(`/appStoreVersions/${vId}/idfaDeclaration`);
+  if (idfa?.data) {
+    console.log(`  idfaDeclaration: ${JSON.stringify(idfa.data.attributes ?? {})}`);
+  } else {
+    console.log(
+      '  idfaDeclaration: 取得できず (未申告か、App Privacy へ統合済みでこの API 非対応)',
+    );
+  }
+
   header('4. appInfo (カテゴリ / プライバシーポリシー / 年齢レーティング)');
-  const infosResp = await get(`/apps/${APP_ID}/appInfos`, { limit: 10 });
+  // NOTE: JSON:API の relationships.data は include= を指定しないと空になる。
+  // 指定せずに読むと設定済みの項目まで「未設定」に見えてしまう
+  // (このプロジェクトで繰り返し踏んだ罠)。
+  const infosResp = await get(`/apps/${APP_ID}/appInfos`, {
+    limit: 10,
+    include: 'primaryCategory,secondaryCategory,ageRatingDeclaration',
+  });
+  const included = infosResp?.included ?? [];
+  const findIncluded = (type, id) =>
+    included.find((x) => x.type === type && x.id === id);
   for (const info of infosResp?.data ?? []) {
     const a = info.attributes ?? {};
-    console.log(
-      `  appInfo id=${info.id} state=${a.appStoreState ?? a.state} ageRatingDeclaration=${info.relationships?.ageRatingDeclaration?.data?.id ?? '(なし)'}`,
-    );
     const cats = info.relationships ?? {};
+    const ardId = cats.ageRatingDeclaration?.data?.id;
+    console.log(
+      `  appInfo id=${info.id} state=${a.appStoreState ?? a.state} ageRatingDeclaration=${ardId ?? '(なし)'}`,
+    );
+    if (ardId) {
+      const ard = findIncluded('ageRatingDeclarations', ardId);
+      const aa = ard?.attributes ?? {};
+      // 未回答の項目 (null) だけを抜き出す。全項目を並べるとノイズになる。
+      const unanswered = Object.entries(aa)
+        .filter(([, v]) => v === null || v === undefined)
+        .map(([k]) => k);
+      console.log(
+        `    年齢レーティング: 回答済み ${Object.keys(aa).length - unanswered.length} 項目 / 未回答 ${unanswered.length} 項目`,
+      );
+      if (unanswered.length > 0) {
+        console.log(`    未回答: ${unanswered.join(', ')}`);
+        flag(`年齢レーティングに未回答項目が ${unanswered.length} 件ある`);
+      }
+    } else {
+      flag('ageRatingDeclaration が未作成');
+    }
     console.log(
       `    primaryCategory=${cats.primaryCategory?.data?.id ?? '★未設定'} secondaryCategory=${cats.secondaryCategory?.data?.id ?? '(なし)'}`,
     );
