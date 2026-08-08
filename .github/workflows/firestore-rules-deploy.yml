@@ -63,6 +63,15 @@ jobs:
           node-version: 22
       - run: npm ci
 
+      # Firestore エミュレータは JVM 上で動く。ubuntu-latest の既定 JDK は
+      # firebase-tools の要求 (21 以上) を満たさず
+      # "firebase-tools no longer supports Java version before 21" で落ちるため、
+      # 明示的に 21 を入れる。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       # ★ ルールの回帰テスト。ここが落ちたらデプロイステップまで到達しない
       #   (後続に if: success() 相当の依存があるため)。
       #   テストを通らないルールを本番に出さないための関門。
