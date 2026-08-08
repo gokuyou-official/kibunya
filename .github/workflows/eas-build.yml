@@ -1,19 +1,18 @@
 name: EAS Build iOS Production
 
+# 手動起動のみ。push トリガーは意図的に持たない。
+#
+# 以前は main への push で自動起動し、paths-ignore で .build-trigger /
+# ワークフロー定義 / scripts / *.md を除外していた。しかし src/ や App.tsx を
+# 変更する通常の push は当然すべて素通りするため、コードを直すたびに
+# クラウドビルドが走って EAS の月次枠を消費していた。
+# 実際 1.0.3 期には 4 本 (77-80) が走った上で Apple 側にトレイン閉鎖で
+# 破棄され成果ゼロ、1.0.4 期には 83/84 が意図せず TestFlight に並んだ。
+#
+# ビルドは .build-trigger 経由の eas-local-build.yml に一本化する
+# (macOS ランナー上の --local ビルドなので EAS build credit を消費しない)。
+# このワークフローはクラウド側が必要になった時の予備として手動起動で残す。
 on:
-  push:
-    branches:
-      - main
-    # .build-trigger はローカルビルド (eas-local-build.yml) 起動専用の
-    # マーカーファイル。これとワークフロー定義のみの push では
-    # クラウドビルドを起動しない (二重ビルド / EAS quota 消費防止)。
-    paths-ignore:
-      - '.build-trigger'
-      - '.github/workflows/**'
-      # scripts/ は ASC / Firebase 管理用の Node スクリプト群でアプリの
-      # バンドルには含まれない。ここの変更で iOS ビルドを走らせる意味はない。
-      - 'scripts/**'
-      - '**.md'
   workflow_dispatch:
 
 concurrency:
