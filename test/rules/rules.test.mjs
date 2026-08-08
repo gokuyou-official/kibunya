@@ -12,13 +12,22 @@
 // 対象ルールはリポジトリ直下の firestore.rules をそのまま読む
 // (テスト用のコピーを持たない。乖離を防ぐため)。
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RULES_PATH = path.resolve(HERE, '../../firestore.rules');
+const INVITE_SRC = path.resolve(HERE, '../../src/utils/inviteLink.ts');
+const FRIENDS_SRC = path.resolve(HERE, '../../src/hooks/useFriends.ts');
+
+// 実装が friendsList に書き込むペイロード。
+// ★ 手書きのサンプルではなく実装と同じものを使う。serverTimestamp() は
+//   FieldValue センチネルで、通常の値と rules 上での見え方が違いうるため
+//   (keys() に現れるか等)、必ずこれでテストする。
+//   実装との乖離は下の「実装ドリフト検査」で機械的に検出する。
+const friendPayload = () => ({ addedAt: serverTimestamp() });
 
 const env = await initializeTestEnvironment({
   projectId: 'demo-kibunya',
@@ -71,11 +80,62 @@ async function readRaw(pathArr) {
 
 // ───────────────────────────────── friendsList
 
+section('実装ドリフト検査: friendsList に書き込むキーが addedAt のみか');
+
+// allow create の keys().hasOnly(['addedAt']) は、実装が addedAt 以外を
+// 1 つでも書くと招待リンクによるフレンド追加を完全に壊す。
+// 実装側にキーが増えたらここで落として気づけるようにする。
+for (const [label, srcPath] of [
+  ['inviteLink.ts', INVITE_SRC],
+  ['useFriends.ts', FRIENDS_SRC],
+]) {
+  await t(`${label} の friendsList への setDoc ペイロードが { addedAt } のみ`, async () => {
+    const src = fs.readFileSync(srcPath, 'utf8');
+    // friendsList を指す setDoc の第2引数 (オブジェクトリテラル) を全部拾う
+    const calls = [...src.matchAll(/setDoc\(\s*\n\s*doc\([^)]*friendsList[^)]*\),\s*\n\s*\{([^}]*)\}/g)];
+    if (calls.length === 0) throw new Error('friendsList への setDoc が見つからない (正規表現の見直しが必要)');
+    for (const m of calls) {
+      const keys = m[1]
+        .split(',')
+        .map((s) => s.split(':')[0].trim())
+        .filter(Boolean);
+      const extra = keys.filter((k) => k !== 'addedAt');
+      if (extra.length > 0) {
+        throw new Error(`addedAt 以外のキーがある: ${extra.join(', ')} (rules の hasOnly と不整合)`);
+      }
+    }
+    console.log(`       (${calls.length} 箇所を検査)`);
+  });
+}
+
 section('friendsList: 相手側からの作成 (招待リンクの相互登録)');
 
 await env.clearFirestore();
-await t('B が addedAt のみで新規作成できる', async () => {
-  await assertSucceeds(setDoc(doc(dbB, ...FL), { addedAt: new Date() }, { merge: true }));
+await t('B が実装と同じペイロード (serverTimestamp + merge) で新規作成できる', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...FL), friendPayload(), { merge: true }));
+});
+
+await env.clearFirestore();
+await t('serverTimestamp() でも keys() に addedAt として現れる (= hasOnly を通る)', async () => {
+  // merge なし・create でも通ることを確認。センチネルがキーとして
+  // 現れなければ hasOnly([]) 扱いになり、逆に通ってしまう / 落ちる。
+  await assertSucceeds(setDoc(doc(dbB, ...FL), friendPayload()));
+  const d = await readRaw(FL);
+  if (!d || d.addedAt === undefined) throw new Error('addedAt が保存されていない');
+});
+
+await env.clearFirestore();
+await t('create 時は merge の有無で結果が変わらない (既存ドキュメントが無いため)', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...FL), friendPayload(), { merge: true }));
+  await env.clearFirestore();
+  await assertSucceeds(setDoc(doc(dbB, ...FL), friendPayload()));
+});
+
+await env.clearFirestore();
+await t('serverTimestamp + active 混在の作成は拒否される', async () => {
+  await assertFails(
+    setDoc(doc(dbB, ...FL), { ...friendPayload(), active: false }, { merge: true }),
+  );
 });
 
 await env.clearFirestore();
@@ -91,8 +151,8 @@ await t('B が addedAt 以外のフィールドを混ぜて作成しようとす
 section('friendsList: 相手側からの再書き込み (招待リンクを踏み直した場合)');
 
 await seed(FL, { addedAt: new Date('2026-01-01'), active: false });
-await t('merge: true なら許可される', async () => {
-  await assertSucceeds(setDoc(doc(dbB, ...FL), { addedAt: new Date() }, { merge: true }));
+await t('merge: true なら許可される (実装と同じ serverTimestamp ペイロード)', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...FL), friendPayload(), { merge: true }));
 });
 await t('  → A の active: false が保持されている', async () => {
   const d = await readRaw(FL);
