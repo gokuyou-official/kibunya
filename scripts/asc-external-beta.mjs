@@ -229,12 +229,15 @@ async function main() {
   // 「不要」に倒すと審査側がサインインできず差し戻される恐れがあるため、
   // 実績のある構成を変えない。
   // ★ 資格情報はログに出さない (公開リポジトリなので値が残ると事故になる)。
+  // ★ このエンドポイントは sort を受け付けない (PARAMETER_ERROR.ILLEGAL)。
+  //   複数件取って、連絡先が入っているものを選ぶ。
   const asv = await asc.get(`/apps/${ASC_APP_ID}/appStoreVersions`, {
-    limit: 1,
-    sort: '-versionString',
+    limit: 10,
     include: 'appStoreReviewDetail',
   });
-  const srcDetail = (asv?.included ?? []).find((i) => i.type === 'appStoreReviewDetails');
+  const srcDetail = (asv?.included ?? [])
+    .filter((i) => i.type === 'appStoreReviewDetails')
+    .find((i) => i.attributes?.contactEmail) ?? null;
   const sd = srcDetail?.attributes ?? {};
   const demo = sd.demoAccountRequired
     ? {
