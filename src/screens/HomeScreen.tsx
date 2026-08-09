@@ -18,6 +18,7 @@ import {
   addDoc,
   collection,
   serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 import { colors } from '../config/colors';
 import { ActivityId, getActivity, getEnabledActivityIds } from '../config/activities';
@@ -32,9 +33,10 @@ import FriendPill from '../components/FriendPill';
 import { useWaitingReset } from '../contexts/WaitingResetContext';
 import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
+import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 
-// 「待ちますかー」を自動解除するまでの時間 (3時間)
-const WAITING_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+// 待機時間の実体は useMyMood の MOOD_TTL_MS (3時間)。
+// ここでは再エクスポートせず、必要な箇所で MOOD_TTL_MS を使う。
 
 export default function HomeScreen({ navigation, route }: any) {
   const { currentUser } = useAuth();
@@ -59,29 +61,22 @@ export default function HomeScreen({ navigation, route }: any) {
     }
   }, [visibleIds, activeId]);
 
-  // 送信後の「待ちますかー」状態
-  const [waiting, setWaiting] = useState(false);
   const [overlay, setOverlay] = useState(false);
   const [sending, setSending] = useState(false);
   const [area, setArea] = useState('');
-  // 「いきますかー」を送信した時刻 (epoch ms)。3時間経過の判定に使う。
-  // アプリを完全終了すれば waiting ごと消えるので永続化はしない。
-  const [waitingStartedAt, setWaitingStartedAt] = useState<number | null>(null);
-  // 3時間経過時に「気分じゃないかも？」を出している間 true
-  const [expiredNotice, setExpiredNotice] = useState(false);
-  // 期限切れ処理の二重発火ガード (AppState 復帰とタイマーが同時に来る等)
-  const expiringRef = useRef(false);
   // 届く相手が0人だった時の一言を出している間 true。
-  // 待機状態には入らないので waiting とは独立。
+  // 送信自体を行わないので mood とは無関係。
   const [noRecipients, setNoRecipients] = useState(false);
 
-  // 全ての解除経路が通る出口。タイマー関連の状態もまとめて畳む。
+  // 送信後の状態は Firestore が持つ。ローカル state だとアプリを落とすと
+  // 消えてしまい、「送ったのに待機が消えている」状態になっていた。
+  const { mood, phase, remainingMs, closeMood } = useMyMood(currentUser?.uid);
+  const waiting = phase === 'waiting';
+
+  // 全ての解除経路が通る出口。mood に closedAt を入れて締める。
   const clearWaiting = useCallback(() => {
-    expiringRef.current = false;
-    setWaiting(false);
-    setWaitingStartedAt(null);
-    setExpiredNotice(false);
-  }, []);
+    closeMood();
+  }, [closeMood]);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -122,6 +117,22 @@ export default function HomeScreen({ navigation, route }: any) {
     setSending(true);
     try {
       const myName = profile.name || 'フレンド';
+      // 先に mood を作る。送信後の状態はこのドキュメントが持つ。
+      // expiresAt はクライアントで計算した固定値。serverTimestamp は
+      // 「今」しか入れられず未来時刻を作れないため。
+      // recipientIds は「かー」を返せる人の判定にルール側で使う。
+      const expiresAt = Timestamp.fromMillis(Date.now() + MOOD_TTL_MS);
+      const moodRef = await addDoc(collection(db, 'moods'), {
+        senderId: currentUser.uid,
+        senderName: myName,
+        activity: activeId,
+        area: area.trim() || null,
+        recipientIds: recipients.map((f) => f.id),
+        createdAt: serverTimestamp(),
+        expiresAt,
+        // null で作る。締めた時に closedAt が入り、購読クエリから外れる。
+        closedAt: null,
+      });
       // active なフレンドにだけ Firestore notification を書き込み、push を送る。
       // tokens と notificationIds は同じインデックスで保持し、受信側がタップ
       // したときに自分宛の Firestore notification doc に飛べるようにする。
@@ -139,6 +150,9 @@ export default function HomeScreen({ navigation, route }: any) {
           createdAt: serverTimestamp(),
           isRead: false,
           reactedBy: null,
+          // 受信側が「かー」を書き込む先と、期限切れ表示の判定に使う。
+          moodId: moodRef.id,
+          expiresAt,
         });
         if (f.fcmToken) {
           tokens.push(f.fcmToken);
@@ -153,11 +167,8 @@ export default function HomeScreen({ navigation, route }: any) {
           type: 'kibun',
         });
       }
+      // 待機状態は mood の購読 (useMyMood) が拾うので、ここでは立てない。
       setOverlay(true);
-      expiringRef.current = false;
-      setWaitingStartedAt(Date.now());
-      setExpiredNotice(false);
-      setWaiting(true);
     } catch (e: any) {
       console.error('handleSend error', e);
       Alert.alert('送信失敗', 'もう一度お試しください');
@@ -170,8 +181,16 @@ export default function HomeScreen({ navigation, route }: any) {
   // route.params.resetAt を更新する。タブが選択済みでも「戻れる」ことを
   // 保証するための導線。
   const resetAt = route?.params?.resetAt;
+  // ★ 処理済みの値を覚えておく。clearWaiting は closeMood 経由で moodId に
+  //   依存するため、新しい mood ができるたびに関数の同一性が変わる。
+  //   素直に [resetAt, clearWaiting] で発火させると、過去のタブ再タップが
+  //   残ったまま新しい mood を即座に締めてしまう。
+  const handledResetAtRef = useRef<number | null>(null);
   useEffect(() => {
-    if (resetAt) clearWaiting();
+    if (!resetAt) return;
+    if (handledResetAtRef.current === resetAt) return;
+    handledResetAtRef.current = resetAt;
+    clearWaiting();
   }, [resetAt, clearWaiting]);
 
   // 待機解除 (2): 友達から「かー」が返ってきた時の自動解除。
@@ -180,56 +199,24 @@ export default function HomeScreen({ navigation, route }: any) {
   // 時には既に通常画面に戻っており、そのまま次の「いきますかー」を
   // 押せる状態になる。
   const { resetToken } = useWaitingReset();
+  // resetAt と同じ理由で、処理済みトークンを覚えておく。
+  const handledResetTokenRef = useRef(0);
   useEffect(() => {
-    if (resetToken > 0) clearWaiting();
+    if (resetToken <= 0) return;
+    if (handledResetTokenRef.current === resetToken) return;
+    handledResetTokenRef.current = resetToken;
+    clearWaiting();
   }, [resetToken, clearWaiting]);
 
   // 待機解除 (4): 送信から3時間経過。
   //
-  // setTimeout だけに頼らないのは、アプリがバックグラウンドに入ると
-  // JS タイマーが停止/遅延して発火時刻がずれるため。送信時刻を保持し、
-  //   - 残り時間ぶんの setTimeout
-  //   - フォアグラウンド復帰 (AppState 'active') 時の再判定
-  // の両方で「今の時刻」と比較する。復帰時に既に3時間を超えていれば
-  // その場で解除する。
-  useEffect(() => {
-    if (!waiting || waitingStartedAt === null) return;
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
-
-    const check = () => {
-      if (cancelled) return;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      const remaining = waitingStartedAt + WAITING_TIMEOUT_MS - Date.now();
-      if (remaining <= 0) {
-        // 一言を出してから解除する。実際の解除は
-        // WaitingExpiredNotice の onFinish (= clearWaiting) が行う。
-        if (expiringRef.current) return;
-        expiringRef.current = true;
-        setExpiredNotice(true);
-        return;
-      }
-      timer = setTimeout(check, remaining);
-    };
-
-    check();
-
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') check();
-    });
-
-    // waiting が false になった時 / 別の解除経路が走った時にここが必ず
-    // 呼ばれ、タイマーと AppState 購読を落とす。
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      sub.remove();
-    };
-  }, [waiting, waitingStartedAt]);
+  // 期限判定は useMyMood が mood.expiresAt と現在時刻の比較で行う。
+  // 以前は setTimeout + AppState でローカルに測っていたが、
+  // 期限そのものを Firestore に持たせたので、復帰時に再計算するだけで
+  // 済むようになった (タイマーのズレを気にしなくてよい)。
+  //
+  // 「かー」が0件で期限切れ → 一言を出して締める。
+  // 1件以上 → 締め表示を出し、ユーザーが閉じるまで残す (下の JSX)。
 
   // 表示可能なアクティビティが無い場合 (interests 未設定 or enabled なものが無い)
   if (visibleIds.length === 0) {
@@ -333,6 +320,10 @@ export default function HomeScreen({ navigation, route }: any) {
                 <Text style={styles.waitingStatusText}>
                   友達の「かー」を待ってます {activity.waitEmoji}
                 </Text>
+                {/* カウントダウンは期限まで止めずに動かす */}
+                <Text style={styles.waitingCountdown}>
+                  あと {formatRemaining(remainingMs)}
+                </Text>
               </View>
             ) : (
               <Pressable
@@ -383,6 +374,34 @@ export default function HomeScreen({ navigation, route }: any) {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/*
+        期限切れ + 「かー」1件以上 → 締めの表示。
+        ユーザーが閉じるまで残す。閉じずにアプリを落としても closedAt が
+        入っていないので、次の起動でまた出る。
+      */}
+      {phase === 'expiredMatched' && mood && (
+        <View style={styles.closingLayer}>
+          <View style={styles.closingCard}>
+            <Text style={styles.closingEmoji}>🍻</Text>
+            <Text style={styles.closingTitle}>
+              {mood.reactionCount}人から「かー」が届きました
+            </Text>
+            <Text style={styles.closingSub}>
+              気分が合いましたね。あとは直接どうぞ。
+            </Text>
+            <Pressable
+              onPress={closeMood}
+              style={({ pressed }) => [
+                styles.closingBtn,
+                pressed && { opacity: 0.9 },
+              ]}
+            >
+              <Text style={styles.closingBtnText}>とじる</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <SendOverlay
         visible={overlay}
         onClose={() => setOverlay(false)}
@@ -393,7 +412,10 @@ export default function HomeScreen({ navigation, route }: any) {
         3時間経過の一言。フェードアウトし終わってから clearWaiting() が
         走るので、「表示 → 通常画面へ」の順序になる。
       */}
-      <WaitingExpiredNotice visible={expiredNotice} onFinish={clearWaiting} />
+      <WaitingExpiredNotice
+        visible={phase === 'expiredEmpty'}
+        onFinish={closeMood}
+      />
       {/* 届く相手が0人だった場合。送信は行われず、待機状態にも入らない。 */}
       <WaitingExpiredNotice
         visible={noRecipients}
@@ -405,6 +427,54 @@ export default function HomeScreen({ navigation, route }: any) {
 }
 
 const styles = StyleSheet.create({
+  waitingCountdown: {
+    marginTop: 6,
+    fontSize: 13,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
+  },
+  // 締めの表示。既存の配色 (藍・山吹・朱) の範囲で組む。
+  closingLayer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(10,20,40,0.86)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+  },
+  closingCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: colors.aiDeep,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    paddingVertical: 28,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  closingEmoji: { fontSize: 56, marginBottom: 12 },
+  closingTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.yamabuki,
+    textAlign: 'center',
+  },
+  closingSub: {
+    marginTop: 8,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  closingBtn: {
+    marginTop: 22,
+    alignSelf: 'stretch',
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: colors.shu,
+    alignItems: 'center',
+  },
+  closingBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
   safe: {
     flex: 1,
     backgroundColor: colors.ai,

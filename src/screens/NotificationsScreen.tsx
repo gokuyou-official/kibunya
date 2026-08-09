@@ -78,6 +78,7 @@ export default function NotificationsScreen({ route }: any) {
       notifId: string,
       senderId: string,
       activityId: string,
+      moodId?: string,
     ) => {
       if (!currentUser) return;
       try {
@@ -91,6 +92,7 @@ export default function NotificationsScreen({ route }: any) {
           profile.name || 'フレンド',
           activity.id,
           activity.matchEmoji,
+          moodId,
         );
       } catch (e) {
         console.error('handleReact error', e);
@@ -158,7 +160,14 @@ export default function NotificationsScreen({ route }: any) {
             >
               <NotificationCard
                 notification={item}
-                onReact={() => handleReact(item.id, item.senderId, item.activity)}
+                onReact={() =>
+                  handleReact(
+                    item.id,
+                    item.senderId,
+                    item.activity,
+                    item.moodId,
+                  )
+                }
               />
             </View>
           )}

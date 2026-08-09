@@ -10,6 +10,7 @@ import {
   getDocs,
   updateDoc,
   addDoc,
+  setDoc,
   serverTimestamp,
   writeBatch,
 } from 'firebase/firestore';
@@ -28,6 +29,10 @@ export type Notification = {
   createdAt: any;
   isRead: boolean;
   reactedBy: string | null;
+  // 送信側の mood との紐付け。旧データには無いので optional。
+  moodId?: string;
+  // 気分の有効期限 (ms)。過ぎたカードは減光して「かー」を押せなくする。
+  expiresAtMs?: number;
 };
 
 export function useNotifications(
@@ -54,10 +59,17 @@ export function useNotifications(
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const list: Notification[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Notification, 'id'>),
-        }));
+        const list: Notification[] = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ...(data as Omit<Notification, 'id'>),
+            // Timestamp のままだと比較しづらいので ms に落とす。
+            // 旧データ (expiresAt 無し) は undefined のままにして、
+            // 「期限の概念が無い = 減光しない」扱いにする。
+            expiresAtMs: data.expiresAt?.toMillis?.(),
+          };
+        });
         list.sort((a, b) => {
           const ma = (a.createdAt as any)?.toMillis?.() ?? 0;
           const mb = (b.createdAt as any)?.toMillis?.() ?? 0;
@@ -124,6 +136,7 @@ export function useNotifications(
       myName: string,
       activity: ActivityId,
       matchEmoji: string,
+      moodId?: string,
     ) => {
       if (!currentUserId) return;
       try {
@@ -138,6 +151,21 @@ export function useNotifications(
           reactedBy: currentUserId,
           isRead: true,
         });
+
+        // 送信側の待機状態を解くための「かー」。doc ID を自分の uid に
+        // することで 1人1件を構造で保証する。
+        // ★ ルール上 create のみ許可。2回目以降は update 扱いで拒否される。
+        //   二重タップを無害にするため、そのエラーは握り潰す
+        //   (notifications 側は上の reactedBy で既に確定している)。
+        if (moodId) {
+          try {
+            await setDoc(doc(db, 'moods', moodId, 'reactions', currentUserId), {
+              createdAt: serverTimestamp(),
+            });
+          } catch (e) {
+            console.warn('mood reaction skipped', e);
+          }
+        }
         // 相手にお礼通知
         const reactionRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUserId,
