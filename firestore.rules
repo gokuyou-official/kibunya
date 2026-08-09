@@ -38,6 +38,52 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == friendId;
     }
 
+    // 「いきますかー」を送った後の状態。送信者本人の持ち物。
+    match /moods/{moodId} {
+      // 読めるのは送信者だけ。受信側はカードに必要な情報を
+      // notifications 側に持っているので、ここを読む必要がない。
+      allow read: if request.auth != null
+        && request.auth.uid == resource.data.senderId;
+
+      // ★ キーを固定する。recipientIds は「かー」を返せる人の判定に
+      //   使うので、後から差し替えられないよう update 対象から外す。
+      allow create: if request.auth != null
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+             'senderId', 'senderName', 'activity', 'area',
+             'recipientIds', 'createdAt', 'expiresAt', 'closedAt'
+           ]);
+
+      // 触れるのは closedAt だけ。期限 (expiresAt) や宛先を後から
+      // 書き換えられないようにする。
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.senderId
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['closedAt']);
+
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.senderId;
+
+      // 「かー」。doc ID = 返した人の uid にして、1人1件を構造で保証する。
+      match /reactions/{userId} {
+        // 集計するのは送信者だけ。
+        allow read: if request.auth != null
+          && request.auth.uid ==
+             get(/databases/$(database)/documents/moods/$(moodId)).data.senderId;
+
+        // ★ create のみ。update / delete は許可しない
+        //   (「かー」の取り消しは仕様として存在しない)。
+        //   2回目以降は update 扱いになって拒否される。呼び出し側は
+        //   そのエラーを握り潰す (二重タップを無害にするため)。
+        //   宛先に入っていない人は返せない。moodId を知っていても弾く。
+        allow create: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['createdAt'])
+          && request.auth.uid in
+             get(/databases/$(database)/documents/moods/$(moodId)).data.recipientIds;
+      }
+    }
+
     match /notifications/{notificationId} {
       allow read: if request.auth != null &&
         (request.auth.uid == resource.data.senderId ||

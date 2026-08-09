@@ -30,7 +30,18 @@ export async function handleInviteLink(
     const friendId = extractFriendIdFromUrl(url);
     if (!friendId) return;
     if (friendId === currentUserId) {
-      // 自分のリンクを自分で踏んだ場合は無音 (UI 上の混乱を避ける)
+      // 自分のリンクを自分で踏んだ場合。
+      //
+      // 以前はここで無音のまま return していたが、成功も失敗も何も出ないため
+      // 「押しても何も起きない = 壊れている」としか見えなかった。実際に
+      // 「ここからはできないみたい」という報告の症状と一致する。
+      //
+      // 異常ではなく想定内の操作なので、エラー扱いにはしない。
+      // 何が起きたかと、次にどうすればよいかだけを伝える。
+      Alert.alert(
+        'これはあなた自身の招待リンクです',
+        'このリンクは友達に送ってください。友達が開くと、お互いの友達リストに追加されます。',
+      );
       return;
     }
 
@@ -74,7 +85,8 @@ export async function handleInviteLink(
 //   kibunya://invite/{uid}             (アプリのカスタムスキーム)
 //   kibunya:///invite/{uid}            (Linking.createURL の旧出力)
 //   https://.../kibunya/invite/{uid}   (Web 招待リンク → ブラウザ経由)
-function extractFriendIdFromUrl(url: string): string | null {
+// 未ログイン時の退避処理 (App.tsx) からも使うので export する。
+export function extractFriendIdFromUrl(url: string): string | null {
   // パス部分を取り出して '/' で分割
   // URL コンストラクタは独自スキームも解釈できるが Hermes でない RN ランタイム
   // 互換性のため正規表現で素朴に処理する

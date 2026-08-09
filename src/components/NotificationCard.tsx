@@ -62,7 +62,14 @@ export default function NotificationCard({ notification, onReact }: Props) {
   // 「かー」ボタンの表示条件は reactedBy / isReaction だけに依存する。
   // isRead が true でも (= アラートタブを「見た」後でも) reacted でなければ
   // ボタンは押せる状態のままにする。
-  const canReact = !reacted && !isReaction;
+  // 気分の有効期限が切れたカード。送信側は既に締めているので、
+  // ここで「かー」を返しても相手には届かない。押せなくして減光する。
+  // expiresAtMs を持たない旧データは期限の概念が無いので対象外。
+  const expired =
+    !isReaction &&
+    typeof notification.expiresAtMs === 'number' &&
+    Date.now() >= notification.expiresAtMs;
+  const canReact = !reacted && !isReaction && !expired;
 
   const handlePress = async () => {
     if (busyRef.current || !onReact) return;
@@ -107,6 +114,9 @@ export default function NotificationCard({ notification, onReact }: Props) {
         styles.card,
         unread ? styles.cardUnread : styles.cardRead,
         reacted && styles.cardDone,
+        // 期限切れは全体を減光する。本文は読めるまま残す
+        // (何が終わったのか分からなくならないように)。
+        expired && styles.cardExpired,
       ]}
     >
       {/*
@@ -152,12 +162,27 @@ export default function NotificationCard({ notification, onReact }: Props) {
         <View style={styles.doneBadge}>
           <Text style={styles.doneText}>済👌</Text>
         </View>
+      ) : expired ? (
+        // 期限切れ。押せないことが分かるよう、バッジだけ残す。
+        <View style={styles.expiredBadge}>
+          <Text style={styles.expiredText}>終了</Text>
+        </View>
       ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  cardExpired: { opacity: 0.45 },
+  expiredBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  expiredText: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+
   card: {
     flexDirection: 'row',
     alignItems: 'center',

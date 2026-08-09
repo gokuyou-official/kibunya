@@ -91,11 +91,15 @@
   </a>
 
   <p class="note" id="note">
-    アプリが入っていない場合は App Store のページが開きます。<br>
-    TestFlight 版をお使いの方もそのまま開けます。
+    KIBUNYA がインストール済みならアプリが開きます。<br>
+    まだの方は、下から App Store で入手してください。
   </p>
   <p class="note">
     <a id="storeLink" href="https://apps.apple.com/app/id6766822899">App Store で KIBUNYA を見る</a>
+  </p>
+  <p class="note">
+    App Store から入れた後は、<strong>もう一度このリンクを開いてください</strong>。<br>
+    インストールしただけでは友達登録は行われません。
   </p>
 
   <footer>© 2026 gokuyou-official</footer>
@@ -123,42 +127,35 @@
       }
 
       var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
-      var APP_STORE_URL = 'https://apps.apple.com/app/id6766822899';
-      // カスタムスキームが「開けなかった」と判断するまでの猶予。
-      // 短すぎると起動が間に合わず誤って App Store に飛ばしてしまい、
-      // 長すぎると未インストールの人を待たせる。
-      var FALLBACK_DELAY = 1200;
 
       appOpenBtn.setAttribute('href', APP_SCHEME_URL);
 
-      // アプリが起動するとこのページはバックグラウンドに回る。
-      // その遷移を捉えられたら「アプリが入っていた」とみなし、
-      // App Store へのフォールバックを取り消す。
-      var leftPage = false;
-      function markLeft() { leftPage = true; }
-      document.addEventListener('visibilitychange', function () {
-        if (document.hidden) markLeft();
-      });
-      window.addEventListener('pagehide', markLeft);
-      window.addEventListener('blur', markLeft);
-
+      // ★ App Store への自動遷移は行わない。
+      //
+      //   以前は「アプリを開く」を押した 1200ms 後に、アプリが起動した
+      //   形跡が無ければ App Store へ自動遷移していた。しかしアプリの
+      //   起動判定は visibilitychange / pagehide / blur に頼っており、
+      //   アプリ内ブラウザ (LINE 等) ではこれらが発火しないことがある。
+      //   その場合アプリが正常に起動していても App Store に飛ばされ、
+      //   ユーザーは App Store の「開く」からアプリを起動する。
+      //   この経路では招待リンクの uid が渡らないため、
+      //   インストールは済んでいるのに友達登録だけ起きない、という
+      //   分かりにくい失敗になる。
+      //
+      //   自動遷移をやめ、App Store へ行くかどうかはユーザーが
+      //   下のリンクを押して決める形にする。
+      //   kibunya:// を試すこと自体は残すので、アプリが入っている人の
+      //   体験は変わらない。
       appOpenBtn.addEventListener('click', function (e) {
         e.preventDefault();
-        leftPage = false;
-        var startedAt = Date.now();
         statusEl.textContent = 'アプリを開いています...';
-
         window.location.href = APP_SCHEME_URL;
 
+        // 押した後も画面が残っている場合の案内。ここでは遷移しない。
         window.setTimeout(function () {
-          // 既に離脱していた = アプリが開いた
-          if (leftPage || document.hidden) return;
-          // タイマーが大幅に遅れて発火した場合も、いったん別アプリに
-          // 移って戻ってきた可能性が高いので誘導しない。
-          if (Date.now() - startedAt > FALLBACK_DELAY + 1000) return;
-          statusEl.textContent = 'アプリが見つかりません。App Store を開きます...';
-          window.location.href = APP_STORE_URL;
-        }, FALLBACK_DELAY);
+          if (document.hidden) return;
+          statusEl.textContent = 'アプリが開かない場合は、下のリンクから App Store へ';
+        }, 1500);
       });
     })();
   </script>

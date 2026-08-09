@@ -12,7 +12,7 @@
 // 対象ルールはリポジトリ直下の firestore.rules をそのまま読む
 // (テスト用のコピーを持たない。乖離を防ぐため)。
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -288,6 +288,132 @@ await t('アカウント削除向け: senderId / receiverId での query が通�
 await seed(NOTIF, notifData);
 await t('絞り込み無しの notifications 全件取得は拒否される', async () => {
   await assertFails(getDocs(collection(dbC, 'notifications')));
+});
+
+// ───────────────────────────────── moods (送信後ステート)
+
+section('moods: 送信者だけが読める');
+
+const MOOD = ['moods', 'mood1'];
+const moodData = () => ({
+  senderId: A,
+  senderName: 'A',
+  activity: 'drinking',
+  area: null,
+  recipientIds: [B],
+  createdAt: serverTimestamp(),
+  expiresAt: new Date(Date.now() + 3 * 60 * 60 * 1000),
+  closedAt: null,
+});
+
+await seed(MOOD, moodData());
+await t('送信者は自分の mood を読める', async () => {
+  await assertSucceeds(getDoc(doc(dbA, ...MOOD)));
+});
+
+await seed(MOOD, moodData());
+await t('受信者は mood を読めない (カードに必要な情報は notifications 側)', async () => {
+  await assertFails(getDoc(doc(dbB, ...MOOD)));
+});
+
+await seed(MOOD, moodData());
+await t('第三者は mood を読めない', async () => {
+  await assertFails(getDoc(doc(dbC, ...MOOD)));
+});
+
+section('moods: 作成');
+
+await env.clearFirestore();
+await t('自分を senderId にした mood は作れる', async () => {
+  await assertSucceeds(setDoc(doc(dbA, 'moods', 'new1'), moodData()));
+});
+
+await env.clearFirestore();
+await t('他人を senderId にした mood は作れない', async () => {
+  await assertFails(setDoc(doc(dbB, 'moods', 'new2'), moodData()));
+});
+
+await env.clearFirestore();
+await t('未知のキーを含む mood は作れない', async () => {
+  await assertFails(
+    setDoc(doc(dbA, 'moods', 'new3'), { ...moodData(), evil: true }),
+  );
+});
+
+section('moods: 更新は closedAt だけ');
+
+await seed(MOOD, moodData());
+await t('送信者は closedAt を立てられる', async () => {
+  await assertSucceeds(updateDoc(doc(dbA, ...MOOD), { closedAt: serverTimestamp() }));
+});
+
+await seed(MOOD, moodData());
+await t('expiresAt は後から書き換えられない (延命できない)', async () => {
+  await assertFails(
+    updateDoc(doc(dbA, ...MOOD), { expiresAt: new Date(Date.now() + 99999999) }),
+  );
+});
+
+await seed(MOOD, moodData());
+await t('recipientIds は後から書き換えられない', async () => {
+  await assertFails(updateDoc(doc(dbA, ...MOOD), { recipientIds: [B, C] }));
+});
+
+await seed(MOOD, moodData());
+await t('受信者は mood を締められない', async () => {
+  await assertFails(updateDoc(doc(dbB, ...MOOD), { closedAt: serverTimestamp() }));
+});
+
+section('moods/reactions: 「かー」');
+
+const REACT_B = ['moods', 'mood1', 'reactions', B];
+
+await seed(MOOD, moodData());
+await t('宛先の人は自分の uid で「かー」を作れる', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...REACT_B), { createdAt: serverTimestamp() }));
+});
+
+await seed(MOOD, moodData());
+await t('宛先でない人は「かー」を作れない', async () => {
+  await assertFails(
+    setDoc(doc(dbC, 'moods', 'mood1', 'reactions', C), { createdAt: serverTimestamp() }),
+  );
+});
+
+await seed(MOOD, moodData());
+await t('他人の uid を doc ID にした「かー」は作れない', async () => {
+  await assertFails(
+    setDoc(doc(dbB, 'moods', 'mood1', 'reactions', C), { createdAt: serverTimestamp() }),
+  );
+});
+
+await seed(MOOD, moodData());
+await t('「かー」に余計なキーは入れられない', async () => {
+  await assertFails(
+    setDoc(doc(dbB, ...REACT_B), { createdAt: serverTimestamp(), note: 'x' }),
+  );
+});
+
+await seed(MOOD, moodData());
+await t('「かー」は2回目 (update) が拒否される = 取り消し不可・重複不可', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...REACT_B), { createdAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(dbB, ...REACT_B), { createdAt: serverTimestamp() }));
+});
+
+await seed(MOOD, moodData());
+await t('「かー」は削除できない (取り消し機能は存在しない)', async () => {
+  await assertSucceeds(setDoc(doc(dbB, ...REACT_B), { createdAt: serverTimestamp() }));
+  await assertFails(deleteDoc(doc(dbB, ...REACT_B)));
+});
+
+await seed(MOOD, moodData());
+await t('送信者は「かー」を集計できる', async () => {
+  await assertSucceeds(getDocs(collection(dbA, 'moods', 'mood1', 'reactions')));
+});
+
+await seed(MOOD, moodData());
+await t('第三者は「かー」を集計できない', async () => {
+  await assertFails(getDocs(collection(dbC, 'moods', 'mood1', 'reactions')));
 });
 
 // ───────────────────────────────── 結果
