@@ -9,9 +9,10 @@ name: Firestore Rules Deploy
 #   2. workflow_dispatch (手動)。dry_run=true (既定) なら比較のみでデプロイしない。
 #
 # ■ 対象
-#   firestore:rules のみ。functions / hosting / firestore:indexes は含めない。
-#   (--only firestore:rules を明示。`--only firestore` にすると indexes も
-#    対象に入ってしまうので絶対に書き換えないこと)
+#   Firestore のセキュリティルールのみ。functions / hosting / indexes は含めない。
+#   Firebase Rules API (createRuleset + releases.patch) を直接使うため、
+#   構造的にルール以外へは到達しない。firebase-tools の deploy に
+#   戻すと --only の書き間違いで indexes まで巻き込めてしまうので戻さないこと。
 #
 # ■ 前後比較
 #   デプロイ前と後に配信中のルールを取得してログに出し、diff を表示する。
@@ -126,27 +127,28 @@ jobs:
         run: |
           echo "dry_run=true のためデプロイしない。" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # 認証は GOOGLE_APPLICATION_CREDENTIALS 経由。firebase-tools が
-      # サービスアカウントを直接読む。ログイン用トークンは使わない。
-      - name: Write service account file
+      # ★ firebase-tools は使わない。
+      #   `firebase deploy --only firestore:rules` はデプロイ前に
+      #   serviceusage.googleapis.com へ「firestore API が有効か」を問い合わせる。
+      #   デプロイ用 SA に Service Usage の閲覧権限が無いため 403 で落ちる:
+      #     Permission denied to get service [firestore.googleapis.com]
+      #   ルール反映自体にその権限は不要なので、Firebase Rules API を
+      #   直接叩く (createRuleset + releases.patch)。触るのはルールだけで、
+      #   functions / hosting / indexes には構造的に到達しない。
+      - name: Deploy (firestore rules only, Rules REST API)
         if: ${{ env.DRY_RUN != 'true' }}
         env:
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          DRY_RUN: 'false'
         run: |
           set -euo pipefail
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_KEY" > /tmp/sa.json
-          chmod 600 /tmp/sa.json
-
-      - name: Deploy (firestore:rules only)
-        if: ${{ env.DRY_RUN != 'true' }}
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
-        run: |
-          set -euo pipefail
-          npx --yes firebase-tools@latest deploy \
-            --only firestore:rules \
-            --project "$FIREBASE_PROJECT_ID" \
-            --non-interactive
+          {
+            echo "## DEPLOY"
+            echo ""
+            echo '```'
+            node scripts/firebase-deploy-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch rules AFTER
         if: ${{ env.DRY_RUN != 'true' }}
@@ -180,7 +182,3 @@ jobs:
             exit 1
           fi
           echo "✓ 配信中のルールがリポジトリと一致した"
-
-      - name: Cleanup credentials
-        if: always()
-        run: rm -f /tmp/sa.json
