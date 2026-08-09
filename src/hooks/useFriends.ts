@@ -10,6 +10,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { ActivityId } from '../config/activities';
 
 export type Friend = {
   id: string;
@@ -19,6 +20,10 @@ export type Friend = {
   isOnline: boolean;
   // 通知対象フラグ。未定義の旧データは true (有効) として扱う。
   active: boolean;
+  // 相手が選んでいる気分の種類。送信側で「その気分に興味がある人」だけに
+  // 絞るために持つ。ここで持っておけば送信時に getDoc を追加しなくて済む
+  // (users/{friendId} は下でどのみち読んでいる)。
+  interests: ActivityId[];
 };
 
 // 5分以内にlastSeen更新があればオンライン扱い
@@ -67,6 +72,9 @@ export function useFriends(currentUserId: string | undefined) {
               lastSeen: u.lastSeen,
               isOnline,
               active,
+              // 旧データや未設定は空配列。空 = 絞らない扱い
+              // (matchesInterest の仕様に合わせる)。
+              interests: Array.isArray(u.interests) ? u.interests : [],
             });
           }
           setFriends(list);

@@ -30,6 +30,7 @@ import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
 import { useWaitingReset } from '../contexts/WaitingResetContext';
+import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
 
 // 「待ちますかー」を自動解除するまでの時間 (3時間)
@@ -66,10 +67,13 @@ export default function HomeScreen({ navigation, route }: any) {
   // 「いきますかー」を送信した時刻 (epoch ms)。3時間経過の判定に使う。
   // アプリを完全終了すれば waiting ごと消えるので永続化はしない。
   const [waitingStartedAt, setWaitingStartedAt] = useState<number | null>(null);
-  // 3時間経過時に「キブンじゃないかも？」を出している間 true
+  // 3時間経過時に「気分じゃないかも？」を出している間 true
   const [expiredNotice, setExpiredNotice] = useState(false);
   // 期限切れ処理の二重発火ガード (AppState 復帰とタイマーが同時に来る等)
   const expiringRef = useRef(false);
+  // 届く相手が0人だった時の一言を出している間 true。
+  // 待機状態には入らないので waiting とは独立。
+  const [noRecipients, setNoRecipients] = useState(false);
 
   // 全ての解除経路が通る出口。タイマー関連の状態もまとめて畳む。
   const clearWaiting = useCallback(() => {
@@ -96,8 +100,25 @@ export default function HomeScreen({ navigation, route }: any) {
     [friends],
   );
 
+  // 実際に送る相手: active かつ「その気分に興味がある人」。
+  // 以前は受信側でしか絞っていなかったため、興味の無い相手にも doc と push が
+  // 飛んでいた。判定は受信側と同じ述語 (matchesInterest) を使う。
+  const recipients = useMemo(
+    () =>
+      activeId
+        ? activeFriends.filter((f) => matchesInterest(f.interests, activeId))
+        : [],
+    [activeFriends, activeId],
+  );
+
   const handleSend = useCallback(async () => {
     if (!currentUser || sending || !activeId) return;
+    // 届く相手が1人もいないなら、doc も push も作らずに終わる。
+    // 「送ったのに誰にも届いていない」状態 (待機だけ始まる) を作らないため。
+    if (recipients.length === 0) {
+      setNoRecipients(true);
+      return;
+    }
     setSending(true);
     try {
       const myName = profile.name || 'フレンド';
@@ -107,7 +128,7 @@ export default function HomeScreen({ navigation, route }: any) {
       // 受信側 useNotifications が更に興味でフィルタする 2 段構成は維持。
       const tokens: string[] = [];
       const notificationIds: string[] = [];
-      for (const f of activeFriends) {
+      for (const f of recipients) {
         const docRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUser.uid,
           senderName: myName,
@@ -143,7 +164,7 @@ export default function HomeScreen({ navigation, route }: any) {
     } finally {
       setSending(false);
     }
-  }, [currentUser, activeFriends, sending, activeId, profile.name, area, activity]);
+  }, [currentUser, recipients, sending, activeId, profile.name, area, activity]);
 
   // 待機解除 (1): App.tsx の tabPress リスナーが「気分タブの再タップ」時に
   // route.params.resetAt を更新する。タブが選択済みでも「戻れる」ことを
@@ -373,6 +394,12 @@ export default function HomeScreen({ navigation, route }: any) {
         走るので、「表示 → 通常画面へ」の順序になる。
       */}
       <WaitingExpiredNotice visible={expiredNotice} onFinish={clearWaiting} />
+      {/* 届く相手が0人だった場合。送信は行われず、待機状態にも入らない。 */}
+      <WaitingExpiredNotice
+        visible={noRecipients}
+        onFinish={() => setNoRecipients(false)}
+        message="いま気分の合う友達がいません"
+      />
     </SafeAreaView>
   );
 }

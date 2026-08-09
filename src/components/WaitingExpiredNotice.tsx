@@ -1,4 +1,6 @@
-// 「待ちますかー」が3時間経過で自動解除される時に、一瞬だけ出す一言。
+// 画面内に一瞬だけ出す一言。2 箇所から使う:
+//   - 「待ちますかー」が3時間経過で自動解除される時 (既定文言)
+//   - 気分の合う友達が1人もいなかった時 (message で差し替え)
 //
 // 設計上の制約:
 //   - システムダイアログ (Alert.alert) は世界観に合わないので使わない。
@@ -21,11 +23,17 @@ const FADE_OUT_MS = 400;
 
 type Props = {
   visible: boolean;
-  // フェードアウト完了後に呼ばれる。呼び出し側はここで待機状態を解除する。
+  // フェードアウト完了後に呼ばれる。呼び出し側はここで状態を畳む。
   onFinish: () => void;
+  // 表示する一言。省略時は3時間経過の既定文言。
+  message?: string;
 };
 
-export default function WaitingExpiredNotice({ visible, onFinish }: Props) {
+export default function WaitingExpiredNotice({
+  visible,
+  onFinish,
+  message = '気分じゃないかも？',
+}: Props) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(8)).current;
 
@@ -81,7 +89,7 @@ export default function WaitingExpiredNotice({ visible, onFinish }: Props) {
       <Animated.View
         style={[styles.card, { opacity, transform: [{ translateY }] }]}
       >
-        <Text style={styles.text}>キブンじゃないかも？</Text>
+        <Text style={styles.text}>{message}</Text>
       </Animated.View>
     </View>
   );
