@@ -9,8 +9,29 @@ service cloud.firestore {
     }
 
     match /friends/{userId}/friendsList/{friendId} {
+      // リストの持ち主は自分のリストを自由に読み書きできる。
+      // active (通知トグル) を書けるのはここだけ。
       allow read, write: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null && request.auth.uid == friendId;
+
+      // 招待リンク経由の相互登録で、相手が自分のエントリを作成する。
+      // ★ キーを addedAt だけに限定する。制限が無いと、招待リンクを踏む側が
+      //   active: false を仕込んで「相手のリストで自分を最初からミュート」に
+      //   できてしまう (招待リンクは URL を知っていれば誰でも踏める)。
+      allow create: if request.auth != null && request.auth.uid == friendId
+        && request.resource.data.keys().hasOnly(['addedAt']);
+
+      // 既に登録済みの相手が招待リンクを踏み直した場合の再書き込み。
+      // create しか許可しないと、2 回目以降が update 扱いになって拒否される。
+      // 触れるのは addedAt のみ。active には絶対に触らせない。
+      // hasOnly は論理的に hasAny(['active']) を排除するが、将来 hasOnly の
+      // キーを増やした時に active が紛れ込む事故を防ぐため二重に書く。
+      allow update: if request.auth != null
+        && request.auth.uid == friendId
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['addedAt'])
+        && !request.resource.data.diff(resource.data)
+             .affectedKeys().hasAny(['active']);
+
       // アカウント削除時、自分が「相手の友達リストに登録されている側」の
       // ドキュメント (friends/{friendId}/friendsList/{自分のuid}) を
       // 自分自身で削除できるようにする。
