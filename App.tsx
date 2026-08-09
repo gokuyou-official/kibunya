@@ -24,7 +24,15 @@ import {
   registerForPushNotifications,
   setupNotificationHandlers,
 } from './src/utils/pushNotifications';
-import { handleInviteLink } from './src/utils/inviteLink';
+import {
+  handleInviteLink,
+  extractFriendIdFromUrl,
+} from './src/utils/inviteLink';
+import {
+  savePendingInvite,
+  takePendingInvite,
+  clearPendingInvite,
+} from './src/utils/pendingInvite';
 import { WaitingResetProvider } from './src/contexts/WaitingResetContext';
 import { getEnabledActivityIds } from './src/config/activities';
 
@@ -251,6 +259,29 @@ function Root() {
     return () => clearTimeout(t);
   }, [initAttempt, initError, visibleIds.length]);
 
+  // 未ログイン中に踏まれた招待リンクの退避。
+  //
+  // ★ この購読は currentUser の有無に関係なく常時張る。
+  //   以前は下の useEffect (currentUser 必須) だけで購読していたため、
+  //   ログアウト状態で踏んだ 'url' イベントを受け取る先が無く、uid が
+  //   永久に失われていた。インストール直後はまさにこの状態になる。
+  //
+  // 保存するだけで友達追加はしない。実際の処理はログイン後に下の
+  // useEffect が takePendingInvite() で拾って行う。
+  useEffect(() => {
+    if (currentUser) return; // ログイン中は下の本処理が直接さばく
+
+    const stash = (url: string | null) => {
+      if (!url) return;
+      const uid = extractFriendIdFromUrl(url);
+      if (uid) savePendingInvite(uid);
+    };
+
+    Linking.getInitialURL().then(stash);
+    const sub = Linking.addEventListener('url', ({ url }) => stash(url));
+    return () => sub.remove();
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser) return;
 
@@ -260,13 +291,56 @@ function Root() {
 
     registerForPushNotifications(currentUser.uid);
 
-    Linking.getInitialURL().then((url) => {
-      if (url) handleInviteLink(url, currentUser.uid);
-    });
+    let cancelled = false;
+
+    // ★ 起動時の二重処理よけ。
+    //   コールドスタートで招待リンクから起動した場合、
+    //     - 未ログイン時の退避 (savePendingInvite)
+    //     - こちらの getInitialURL()
+    //   が同じ uid を指す。素直に両方処理すると
+    //   「友達になりました」が 2 回出る。
+    //   起動時に処理した uid を 1 つだけ覚えて弾く。
+    //   実行中に届く 'url' イベントは対象外 (踏み直しには毎回反応させる)。
+    let startupUid: string | null = null;
+    const handleOnce = (url: string) => {
+      const uid = extractFriendIdFromUrl(url);
+      if (uid && startupUid === uid) return;
+      if (uid) startupUid = uid;
+      handleInviteLink(url, currentUser.uid);
+    };
+
+    // ログイン/サインアップ完了時に、未ログイン中へ退避しておいた招待を消化する。
+    // 24 時間を過ぎたものは takePendingInvite が null を返して破棄する
+    // (古い招待が突然発火して混乱するのを防ぐため)。
+    //
+    // 取り出せた時点で削除する。ここで消さずに handleInviteLink の成否で
+    // 分岐すると、失敗時に毎起動リトライして同じアラートが出続ける。
+    // 踏み直してもらう方が挙動として素直。
+    //
+    // getInitialURL より先に消化する。逆順だと上の二重処理よけが効かない。
+    takePendingInvite()
+      .then((pendingUid) => {
+        if (cancelled) return;
+        if (pendingUid) {
+          clearPendingInvite();
+          // handleInviteLink は URL を受け取るので uid から組み立てる。
+          handleOnce(`kibunya://invite/${pendingUid}`);
+        }
+        return Linking.getInitialURL();
+      })
+      .then((url) => {
+        if (cancelled || !url) return;
+        handleOnce(url);
+      });
+
     const sub = Linking.addEventListener('url', ({ url }) => {
       handleInviteLink(url, currentUser.uid);
     });
-    return () => sub.remove();
+
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
   }, [currentUser]);
 
   useEffect(() => {
