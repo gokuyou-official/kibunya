@@ -95,19 +95,14 @@ function MainTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        // 「いきますかー」送信後の待機状態は既に気分タブの中にいるため、
-        // タブを押し直しても画面が変わらず「戻れない」と感じてしまう。
-        // 既にフォーカスされている状態での再タップを合図として
-        // HomeScreen に渡し、待機状態をリセットさせる。
-        // (別タブから来た場合は isFocused() が false なので発火しない =
-        //  タブを往復しただけで待機が消えることはない)
-        listeners={({ navigation }) => ({
-          tabPress: () => {
-            if (navigation.isFocused()) {
-              navigation.setParams({ resetAt: Date.now() });
-            }
-          },
-        })}
+        // ★ かつてここに tabPress リスナーがあり、気分タブの再タップを
+        //   「待機状態のリセット」として HomeScreen に伝えていた。
+        //   送信後の状態がローカル state だった頃は見た目を戻すだけの
+        //   操作だったが、moods (Firestore) が真実になった今は
+        //   closedAt を立てて送信そのものを終了させる操作に変質し、
+        //   待機画面へ二度と戻れなくなっていた。
+        //   取り消し機能は仕様として持たないため、リスナーごと削除した。
+        //   待機の終了経路は「かー」受信 / 3時間経過 / 締め表示を閉じる の3つ。
         options={{
           title: '気分',
           tabBarIcon: ({ focused }) => (
