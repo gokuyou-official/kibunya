@@ -133,6 +133,38 @@ async function main() {
     for (const r of rd) console.log(`      · ${r.name.split('/').pop()}`);
   }
 
+  // ★ どのビルドが送信したかの判別。
+  //   Build 86 (moods 対応) が作った notification には moodId / expiresAt が入る。
+  //   Build 85 以前には入らない。moods が 0 件の理由がクライアント側の
+  //   バージョンなのか、書き込み失敗なのかをここで切り分ける。
+  console.log(`\n${'='.repeat(60)}`);
+  console.log('直近の notifications (moodId の有無でビルドを判別)');
+  console.log('='.repeat(60));
+  const nres = await get(token, 'notifications?pageSize=300');
+  const ndocs = nres?.documents ?? [];
+  const kibun = ndocs
+    .filter((d) => d.fields?.type?.stringValue === 'kibun')
+    .sort((a, b) => (a.createTime < b.createTime ? 1 : -1));
+  console.log(`  type=kibun の件数 = ${kibun.length}`);
+  let withMood = 0;
+  for (const d of kibun.slice(0, 12)) {
+    const f = d.fields ?? {};
+    const has = !!f.moodId;
+    if (has) withMood++;
+    console.log(
+      `    ${d.createTime}  moodId=${has ? f.moodId.stringValue : '(なし)'} expiresAt=${
+        f.expiresAt ? 'あり' : '(なし)'
+      } sender=${(f.senderId?.stringValue ?? '?').slice(0, 8)}…`,
+    );
+  }
+  const all = kibun.filter((d) => d.fields?.moodId).length;
+  console.log(`  moodId を持つ kibun 通知 = ${all} / ${kibun.length}`);
+  console.log(
+    all === 0
+      ? '  → moods 対応ビルド (86) からの送信は 1 件も記録されていない'
+      : '  → moods 対応ビルドからの送信あり',
+  );
+
   console.log('\n完了 (読み取りのみ。データは変更していない)');
 }
 
