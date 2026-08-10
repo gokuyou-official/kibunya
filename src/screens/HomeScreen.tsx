@@ -29,7 +29,6 @@ import { sendPushNotification } from '../utils/pushNotifications';
 import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
-import { useWaitingReset } from '../contexts/WaitingResetContext';
 import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
 import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
@@ -71,12 +70,6 @@ export default function HomeScreen({ navigation }: any) {
   // 消えてしまい、「送ったのに待機が消えている」状態になっていた。
   const { mood, phase, remainingMs, closeMood } = useMyMood(currentUser?.uid);
   const waiting = phase === 'waiting';
-
-  // mood を締める唯一の出口。closedAt を入れると購読クエリから外れる。
-  // 呼ぶのは「かー」受信時と、期限切れの表示を閉じた時だけ。
-  const clearWaiting = useCallback(() => {
-    closeMood();
-  }, [closeMood]);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -184,22 +177,11 @@ export default function HomeScreen({ navigation }: any) {
   //   取り消しが起きるうえ、待機画面に二度と戻れなくなる。
   //   取り消し機能は仕様として持たないため、route.params.resetAt ごと削除。
 
-  // 待機解除 (2): 友達から「かー」が返ってきた時の自動解除。
-  // App.tsx の Root が useMatchEvents で reaction を検知した時点で
-  // resetToken をインクリメントする。MatchOverlay の祝祭演出が閉じた
-  // 時には既に通常画面に戻っており、そのまま次の「いきますかー」を
-  // 押せる状態になる。
-  const { resetToken } = useWaitingReset();
-  // clearWaiting は closeMood 経由で moodId に依存するため、新しい mood が
-  // できるたびに関数の同一性が変わる。素直に発火させると、過去の「かー」が
-  // 残ったまま新しい mood を即座に締めてしまう。処理済みトークンを覚えておく。
-  const handledResetTokenRef = useRef(0);
-  useEffect(() => {
-    if (resetToken <= 0) return;
-    if (handledResetTokenRef.current === resetToken) return;
-    handledResetTokenRef.current = resetToken;
-    clearWaiting();
-  }, [resetToken, clearWaiting]);
+  // ★ 「かー」を受け取った時に mood を閉じる処理は廃止した。
+  //   演出 (MatchOverlay) はあくまで「返事が来た」という通知であって、
+  //   送信の寿命とは別物。演出を閉じたら送信も終わる、という結び付けを
+  //   やめ、mood は 🍻 の締め表示として残るようにした。
+  //   これに伴い WaitingResetContext は利用者が居なくなったため削除。
 
   // 待機解除 (4): 送信から3時間経過。
   //
@@ -368,11 +350,12 @@ export default function HomeScreen({ navigation }: any) {
       </KeyboardAvoidingView>
 
       {/*
-        期限切れ + 「かー」1件以上 → 締めの表示。
-        ユーザーが閉じるまで残す。閉じずにアプリを落としても closedAt が
-        入っていないので、次の起動でまた出る。
+        「かー」が1件以上 → 締めの表示。期限は待たない。
+        ユーザーが閉じるまで残る (3時間経っても勝手には消えない)。
+        閉じずにアプリを落としても closedAt が入っていないので、
+        次の起動でまた出る。
       */}
-      {phase === 'expiredMatched' && mood && (
+      {phase === 'matched' && mood && (
         <View style={styles.closingLayer}>
           <View style={styles.closingCard}>
             <Text style={styles.closingEmoji}>🍻</Text>
@@ -402,8 +385,8 @@ export default function HomeScreen({ navigation }: any) {
       />
 
       {/*
-        3時間経過の一言。フェードアウトし終わってから clearWaiting() が
-        走るので、「表示 → 通常画面へ」の順序になる。
+        3時間経過かつ「かー」0件の一言。フェードアウトし終わってから
+        closeMood() が走るので、「表示 → 通常画面へ」の順序になる。
       */}
       <WaitingExpiredNotice
         visible={phase === 'expiredEmpty'}
