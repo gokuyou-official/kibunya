@@ -43,7 +43,12 @@ const PUBLIC_LINK_LIMIT = Number(process.env.PUBLIC_LINK_LIMIT || 10);
 const DRY_RUN = (process.env.DRY_RUN ?? 'true').trim() !== 'false';
 
 const DESCRIPTION = fs.readFileSync('scripts/data/beta-app-description-ja.txt', 'utf8').trim();
-const TEST_INFO = fs.readFileSync('scripts/data/beta-test-info-ja.txt', 'utf8').trim();
+// ★ 読み手が違うので 2 ファイルに分ける。以前は同じ文面を両方に入れていたが、
+//   テスター向けの案内と審査担当者向けの手順は目的が別物。
+//   - WHATS_TO_TEST … TestFlight でテスターに見える「テスト内容」
+//   - REVIEW_NOTES  … Apple の審査担当者だけが見る備考
+const WHATS_TO_TEST = fs.readFileSync('scripts/data/beta-whats-to-test-ja.txt', 'utf8').trim();
+const REVIEW_NOTES = fs.readFileSync('scripts/data/beta-review-notes-ja.txt', 'utf8').trim();
 
 // 連絡先が欠けたまま審査に出すと差し戻される。開始前に止める。
 const required = {
@@ -203,7 +208,7 @@ async function main() {
         data: {
           type: 'betaBuildLocalizations',
           id: existingBl.id,
-          attributes: { whatsNew: TEST_INFO },
+          attributes: { whatsNew: WHATS_TO_TEST },
         },
       });
       console.log(`  更新した: ${existingBl.id}`);
@@ -214,7 +219,7 @@ async function main() {
     const c = await asc.post('/betaBuildLocalizations', {
       data: {
         type: 'betaBuildLocalizations',
-        attributes: { locale, whatsNew: TEST_INFO },
+        attributes: { locale, whatsNew: WHATS_TO_TEST },
         relationships: { build: { data: { type: 'builds', id: build.id } } },
       },
     });
@@ -260,7 +265,7 @@ async function main() {
     contactPhone: CONTACT_PHONE,
     contactEmail: CONTACT_EMAIL,
     ...demo,
-    notes: TEST_INFO,
+    notes: REVIEW_NOTES,
   };
   console.log(`  detail id = ${detailId ?? '(なし)'}`);
   if (!detailId) {
