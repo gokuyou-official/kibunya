@@ -321,7 +321,7 @@ export default function HomeScreen({ navigation }: any) {
 
           <Text style={styles.hint}>
             {waiting
-              ? '友達の返事か、3時間の経過を待ちます'
+              ? '気分は3時間でリセットされます'
               : '興味が合う友達に通知が届きます'}
           </Text>
 
