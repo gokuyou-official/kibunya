@@ -47,6 +47,11 @@ on:
         required: false
         default: ''
         type: string
+      preview_width:
+        description: 'mode=preview のとき: プレビュー画像の幅 px。小さいほどログが軽い'
+        required: false
+        default: '300'
+        type: string
       dry_run:
         description: 'mode=delete のとき: true なら確認のみで削除しない'
         required: true
@@ -114,7 +119,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
           ASC_APP_ID: '6766822899'
-          PREVIEW_WIDTH: '300'
+          PREVIEW_WIDTH: ${{ inputs.preview_width }}
           FILTER_VERSION: ${{ inputs.filter_version }}
           FILTER_FILE_NAME: ${{ inputs.filter_file_name }}
         run: node scripts/asc-dump-screenshots.mjs
