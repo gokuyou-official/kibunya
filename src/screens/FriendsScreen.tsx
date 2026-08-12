@@ -56,18 +56,23 @@ export default function FriendsScreen() {
         <Text style={[styles.name, inactive && styles.textInactive]}>
           {item.name}
         </Text>
-        <View
-          style={[
-            styles.dot,
-            {
-              backgroundColor: inactive
-                ? colors.offline
-                : item.isOnline
-                  ? colors.online
-                  : colors.offline,
-            },
-          ]}
-        />
+        {/*
+          ミュート中 (トグル OFF) は丸を出さない。
+          OFF であること自体が行全体の減光で表現済みで、灰色の丸を重ねると
+          「オフラインだから灰色」なのか「ミュートだから灰色」なのかが
+          区別できなくなる。ON の相手だけ在席を示す。
+        */}
+        {item.active ? (
+          <View
+            style={[
+              styles.dot,
+              { backgroundColor: item.isOnline ? colors.online : colors.offline },
+            ]}
+          />
+        ) : (
+          // 丸の分の幅は空けておく。行ごとにスイッチの位置がずれないように。
+          <View style={styles.dotPlaceholder} />
+        )}
         <Switch
           value={item.active}
           onValueChange={(v) => handleToggle(item.id, v)}
@@ -99,6 +104,7 @@ export default function FriendsScreen() {
       </View>
 
       <Text style={styles.hint}>オンの友達に気分が届きます</Text>
+      <Text style={styles.hintSub}>緑の丸は、5分以内にアプリを開いた友達です</Text>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.shu} />
@@ -163,6 +169,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textMuted,
     paddingHorizontal: 20,
+  },
+  hintSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+    paddingTop: 2,
     paddingBottom: 10,
   },
   list: {
@@ -211,6 +223,11 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
+  },
+  // 丸を出さない行でも幅を保ち、スイッチの位置を揃える
+  dotPlaceholder: {
+    width: 10,
+    height: 10,
   },
   empty: {
     flex: 1,

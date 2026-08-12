@@ -33,7 +33,6 @@ import {
   takePendingInvite,
   clearPendingInvite,
 } from './src/utils/pendingInvite';
-import { WaitingResetProvider } from './src/contexts/WaitingResetContext';
 import { getEnabledActivityIds } from './src/config/activities';
 
 import OnboardingScreen from './src/screens/OnboardingScreen';
@@ -95,19 +94,14 @@ function MainTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        // 「いきますかー」送信後の待機状態は既に気分タブの中にいるため、
-        // タブを押し直しても画面が変わらず「戻れない」と感じてしまう。
-        // 既にフォーカスされている状態での再タップを合図として
-        // HomeScreen に渡し、待機状態をリセットさせる。
-        // (別タブから来た場合は isFocused() が false なので発火しない =
-        //  タブを往復しただけで待機が消えることはない)
-        listeners={({ navigation }) => ({
-          tabPress: () => {
-            if (navigation.isFocused()) {
-              navigation.setParams({ resetAt: Date.now() });
-            }
-          },
-        })}
+        // ★ かつてここに tabPress リスナーがあり、気分タブの再タップを
+        //   「待機状態のリセット」として HomeScreen に伝えていた。
+        //   送信後の状態がローカル state だった頃は見た目を戻すだけの
+        //   操作だったが、moods (Firestore) が真実になった今は
+        //   closedAt を立てて送信そのものを終了させる操作に変質し、
+        //   待機画面へ二度と戻れなくなっていた。
+        //   取り消し機能は仕様として持たないため、リスナーごと削除した。
+        //   待機の終了経路は「かー」受信 / 3時間経過 / 締め表示を閉じる の3つ。
         options={{
           title: '気分',
           tabBarIcon: ({ focused }) => (
@@ -158,18 +152,10 @@ function Root() {
   // どのタブ/画面にいてもグローバルに重ねて表示できるようにする。
   const { current: matchEvent, dismiss: dismissMatch } = useMatchEvents(currentUser?.uid);
 
-  // 「かー」を受け取ったら HomeScreen の待機状態を解除する。
-  // 祝祭演出が出ているのに裏で「友達の「かー」を待ってます」が
-  // 残り続けるのはちぐはぐなため。
-  // dismiss ではなく検知の時点で解除しておくことで、演出を閉じて
-  // HomeScreen が見えた瞬間には既に「いきますかー」が押せる状態になる
-  // (閉じた後に表示が切り替わるチラつきを避ける)。
-  const [waitingResetToken, setWaitingResetToken] = useState(0);
-  const matchEventId = matchEvent?.id;
-  useEffect(() => {
-    if (!matchEventId) return;
-    setWaitingResetToken((n) => n + 1);
-  }, [matchEventId]);
+  // ★ かつてここで「かー」検知を HomeScreen に伝え、待機状態を解除させていた
+  //   (WaitingResetContext)。演出を閉じたら送信も終わる、という結び付けを
+  //   やめたため削除した。演出は「返事が来た」という通知であって、
+  //   mood の寿命には影響しない。HomeScreen は moods の購読だけを見る。
   // コールドスタート時に取得した通知タップ情報を保持。
   // ナビゲーション準備が整い次第アラートタブに遷移する。
   const pendingNavRef = useRef<{ notificationId?: string } | null>(null);
@@ -442,7 +428,9 @@ function Root() {
   }
 
   return (
-    <WaitingResetProvider resetToken={waitingResetToken}>
+    // NavigationContainer と MatchOverlay の 2 つを返すため Fragment で包む
+    // (以前は WaitingResetProvider がこの役割を兼ねていた)。
+    <>
       <NavigationContainer
         ref={navigationRef}
         linking={linking}
@@ -477,7 +465,7 @@ function Root() {
         activityId={matchEvent?.activity ?? 'drinking'}
         onClose={dismissMatch}
       />
-    </WaitingResetProvider>
+    </>
   );
 }
 

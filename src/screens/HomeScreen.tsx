@@ -11,7 +11,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -30,7 +29,6 @@ import { sendPushNotification } from '../utils/pushNotifications';
 import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
-import { useWaitingReset } from '../contexts/WaitingResetContext';
 import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
 import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
@@ -38,7 +36,7 @@ import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 // 待機時間の実体は useMyMood の MOOD_TTL_MS (3時間)。
 // ここでは再エクスポートせず、必要な箇所で MOOD_TTL_MS を使う。
 
-export default function HomeScreen({ navigation, route }: any) {
+export default function HomeScreen({ navigation }: any) {
   const { currentUser } = useAuth();
   const { profile } = useProfile(currentUser?.uid);
   const { friends } = useFriends(currentUser?.uid);
@@ -72,11 +70,6 @@ export default function HomeScreen({ navigation, route }: any) {
   // 消えてしまい、「送ったのに待機が消えている」状態になっていた。
   const { mood, phase, remainingMs, closeMood } = useMyMood(currentUser?.uid);
   const waiting = phase === 'waiting';
-
-  // 全ての解除経路が通る出口。mood に closedAt を入れて締める。
-  const clearWaiting = useCallback(() => {
-    closeMood();
-  }, [closeMood]);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -177,36 +170,18 @@ export default function HomeScreen({ navigation, route }: any) {
     }
   }, [currentUser, recipients, sending, activeId, profile.name, area, activity]);
 
-  // 待機解除 (1): App.tsx の tabPress リスナーが「気分タブの再タップ」時に
-  // route.params.resetAt を更新する。タブが選択済みでも「戻れる」ことを
-  // 保証するための導線。
-  const resetAt = route?.params?.resetAt;
-  // ★ 処理済みの値を覚えておく。clearWaiting は closeMood 経由で moodId に
-  //   依存するため、新しい mood ができるたびに関数の同一性が変わる。
-  //   素直に [resetAt, clearWaiting] で発火させると、過去のタブ再タップが
-  //   残ったまま新しい mood を即座に締めてしまう。
-  const handledResetAtRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!resetAt) return;
-    if (handledResetAtRef.current === resetAt) return;
-    handledResetAtRef.current = resetAt;
-    clearWaiting();
-  }, [resetAt, clearWaiting]);
+  // ★ 「気分タブの再タップで待機を解除する」経路は廃止した。
+  //   送信後の状態がローカル state だった頃は表示を戻すだけだったが、
+  //   moods (Firestore) が真実になってからは closedAt を立てて
+  //   送信そのものを終了させる操作になっていた。押した本人に自覚が無いまま
+  //   取り消しが起きるうえ、待機画面に二度と戻れなくなる。
+  //   取り消し機能は仕様として持たないため、route.params.resetAt ごと削除。
 
-  // 待機解除 (2): 友達から「かー」が返ってきた時の自動解除。
-  // App.tsx の Root が useMatchEvents で reaction を検知した時点で
-  // resetToken をインクリメントする。MatchOverlay の祝祭演出が閉じた
-  // 時には既に通常画面に戻っており、そのまま次の「いきますかー」を
-  // 押せる状態になる。
-  const { resetToken } = useWaitingReset();
-  // resetAt と同じ理由で、処理済みトークンを覚えておく。
-  const handledResetTokenRef = useRef(0);
-  useEffect(() => {
-    if (resetToken <= 0) return;
-    if (handledResetTokenRef.current === resetToken) return;
-    handledResetTokenRef.current = resetToken;
-    clearWaiting();
-  }, [resetToken, clearWaiting]);
+  // ★ 「かー」を受け取った時に mood を閉じる処理は廃止した。
+  //   演出 (MatchOverlay) はあくまで「返事が来た」という通知であって、
+  //   送信の寿命とは別物。演出を閉じたら送信も終わる、という結び付けを
+  //   やめ、mood は 🍻 の締め表示として残るようにした。
+  //   これに伴い WaitingResetContext は利用者が居なくなったため削除。
 
   // 待機解除 (4): 送信から3時間経過。
   //
@@ -264,11 +239,11 @@ export default function HomeScreen({ navigation, route }: any) {
           <ActivityTab
             availableIds={visibleIds}
             activeId={activeId}
-            // 待機解除 (3): アクティビティタブの切替
-            onChange={(id) => {
-              setActiveId(id);
-              clearWaiting();
-            }}
+            // ★ ここでも待機を解除していたが、同じ理由で外した。
+            //   気分の種類を見比べただけで送信が終了するのは事故になる。
+            //   (現在は有効なアクティビティが1つでこの行自体が描画されないが、
+            //    2つ目を有効にした瞬間に表面化するため先に直しておく)
+            onChange={(id) => setActiveId(id)}
           />
         </View>
       )}
@@ -346,7 +321,7 @@ export default function HomeScreen({ navigation, route }: any) {
 
           <Text style={styles.hint}>
             {waiting
-              ? '下の「気分」タブをもう一度タップしても戻れます'
+              ? '友達の返事か、3時間の経過を待ちます'
               : '興味が合う友達に通知が届きます'}
           </Text>
 
@@ -375,11 +350,12 @@ export default function HomeScreen({ navigation, route }: any) {
       </KeyboardAvoidingView>
 
       {/*
-        期限切れ + 「かー」1件以上 → 締めの表示。
-        ユーザーが閉じるまで残す。閉じずにアプリを落としても closedAt が
-        入っていないので、次の起動でまた出る。
+        「かー」が1件以上 → 締めの表示。期限は待たない。
+        ユーザーが閉じるまで残る (3時間経っても勝手には消えない)。
+        閉じずにアプリを落としても closedAt が入っていないので、
+        次の起動でまた出る。
       */}
-      {phase === 'expiredMatched' && mood && (
+      {phase === 'matched' && mood && (
         <View style={styles.closingLayer}>
           <View style={styles.closingCard}>
             <Text style={styles.closingEmoji}>🍻</Text>
@@ -388,6 +364,17 @@ export default function HomeScreen({ navigation, route }: any) {
             </Text>
             <Text style={styles.closingSub}>
               気分が合いましたね。あとは直接どうぞ。
+            </Text>
+            {/*
+              「かー」が返ってきた後も残り時間を出し続ける。
+              1人返した後に別の友達が返す可能性があり、
+              「あと何時間受け付けているか」が分かる方が自然なため。
+              期限を過ぎたら 0 で止まるので、その時は文言を切り替える。
+            */}
+            <Text style={styles.closingCountdown}>
+              {remainingMs > 0
+                ? `あと ${formatRemaining(remainingMs)} 受付中`
+                : '受付は終了しました'}
             </Text>
             <Pressable
               onPress={closeMood}
@@ -409,8 +396,8 @@ export default function HomeScreen({ navigation, route }: any) {
       />
 
       {/*
-        3時間経過の一言。フェードアウトし終わってから clearWaiting() が
-        走るので、「表示 → 通常画面へ」の順序になる。
+        3時間経過かつ「かー」0件の一言。フェードアウトし終わってから
+        closeMood() が走るので、「表示 → 通常画面へ」の順序になる。
       */}
       <WaitingExpiredNotice
         visible={phase === 'expiredEmpty'}
@@ -464,6 +451,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     textAlign: 'center',
+  },
+  closingCountdown: {
+    marginTop: 14,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
   },
   closingBtn: {
     marginTop: 22,

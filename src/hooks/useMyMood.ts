@@ -12,9 +12,13 @@
 //     createdAt   … 「かー」を返した人。create のみ (取り消し不可)
 //
 // 状態遷移 (closedAt が null の mood が対象):
-//   now <  expiresAt              → 待機中 (🍺 + カウントダウン)
-//   now >= expiresAt かつ 0 件     → 「気分じゃないかも？」を出して閉じる
-//   now >= expiresAt かつ 1 件以上 → 🍻 の締め表示。ユーザーが閉じるまで残す
+//   「かー」が 1 件以上          → 🍻 の締め表示。閉じるまで残る
+//   0 件かつ now <  expiresAt    → 待機中 (🍺 + カウントダウン)
+//   0 件かつ now >= expiresAt    → 「気分じゃないかも？」を出して閉じる
+//
+// ★ 「かー」が返ってきた時点で締め表示に移る。期限を待たない。
+//   演出 (MatchOverlay) はあくまで通知で、mood の寿命には影響しない。
+//   演出を閉じても mood は生きたままで、3 時間経っても勝手には消えない。
 //
 // closedAt を立てて初めて消えるので、締め表示を見ずにアプリを落としても
 // 次回起動時にまた出る。
@@ -146,10 +150,13 @@ export function useMyMood(currentUserId: string | undefined) {
     }
   }, [moodId]);
 
-  const phase = useMemo<'none' | 'waiting' | 'expiredEmpty' | 'expiredMatched'>(() => {
+  const phase = useMemo<'none' | 'waiting' | 'expiredEmpty' | 'matched'>(() => {
     if (!mood) return 'none';
+    // 「かー」が返ってきたら期限を待たずに締め表示へ。
+    // 期限が過ぎてもこの状態のまま (静かに残る)。
+    if (mood.reactionCount > 0) return 'matched';
     if (nowMs < mood.expiresAtMs) return 'waiting';
-    return mood.reactionCount > 0 ? 'expiredMatched' : 'expiredEmpty';
+    return 'expiredEmpty';
   }, [mood, nowMs]);
 
   // 残り時間 (ms)。期限後は 0 で止める (負の値を表示に出さない)。
