@@ -365,6 +365,17 @@ export default function HomeScreen({ navigation }: any) {
             <Text style={styles.closingSub}>
               気分が合いましたね。あとは直接どうぞ。
             </Text>
+            {/*
+              「かー」が返ってきた後も残り時間を出し続ける。
+              1人返した後に別の友達が返す可能性があり、
+              「あと何時間受け付けているか」が分かる方が自然なため。
+              期限を過ぎたら 0 で止まるので、その時は文言を切り替える。
+            */}
+            <Text style={styles.closingCountdown}>
+              {remainingMs > 0
+                ? `あと ${formatRemaining(remainingMs)} 受付中`
+                : '受付は終了しました'}
+            </Text>
             <Pressable
               onPress={closeMood}
               style={({ pressed }) => [
@@ -440,6 +451,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     textAlign: 'center',
+  },
+  closingCountdown: {
+    marginTop: 14,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
   },
   closingBtn: {
     marginTop: 22,
