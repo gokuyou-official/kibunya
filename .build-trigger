@@ -1,21 +1,25 @@
 # eas-local-build.yml 起動用マーカーファイル。
 # このファイルを変更して main に push すると、macOS ローカルビルド +
 # TestFlight 提出 (profile=production, auto_submit=true) が起動する。
-# クラウドビルド (eas-build.yml) は paths-ignore によりこの push では起動しない。
+# クラウドビルド (eas-build.yml) は workflow_dispatch 専用なので起動しない。
 #
 # ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
-# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない
-# (実際 app.json は "10" のままだが実ビルドは 82 まで進んでいる)。
+# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない。
 # 一方 CFBundleShortVersionString は app.json の expo.version がそのまま
 # 使われるため、バージョンを上げる時は app.json 側を編集する。
-build-request: 1.0.4 の 2 回目ビルド（Build 82 以降の修正を反映）
-requested-at: 2026-08-07T05:25:14Z
+build-request: 1.0.4 の Build 88（バージョンは据え置き）
+requested-at: 2026-08-14T00:10:00Z
 reason: |
-  Build 82 (TestFlight 配信済み) 以降に main へ入った 2 件の修正を取り込み、
-  審査提出用のビルドを作成する。お盆前の一般公開を目標とする。
+  Build 87 (外部テスター審査 APPROVED、TestFlight 配信中) の元になった
+  0271b16 以降に main へ入った 2 件の変更を取り込む。
+  app.json の version は 1.0.4 のまま。ビルド番号のみ EAS が 88 に進める。
 
-  含まれる修正:
-  - 6525c6e 通知本文の文言を「〇〇さんが{活動}の気分 (エリア)」に一本化
-           （「かー」返信後にエリア表記が消える不具合も同時解消）
-  - f098d22 通知カードに日付表示を追加（当日は時刻のみ / 前日は「昨日」/
-           それ以前は M/D を前置）
+  含まれる変更:
+  - a660044 待機中の説明を「気分は3時間経過後リセットされます」に修正
+           （「友達の返事か、3時間の経過を待ちます」からの置き換え）
+  - 1ccae8f 「気分じゃないかも？」を 2.5 秒で消えるポップアップから
+           「とじる」を押すまで残るカードに変更（PR #14 / 3ac30be でマージ）
+           🍻 の締め表示と MoodClosingCard を共有し見た目を揃えた
+
+  含まれない（アプリ本体に影響しない）:
+  - a484923 ASC スクリーンショット確認スクリプトの調整（scripts のみ）
