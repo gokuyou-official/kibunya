@@ -31,6 +31,7 @@ import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
 import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
+import MoodClosingCard from '../components/MoodClosingCard';
 import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 
 // 待機時間の実体は useMyMood の MOOD_TTL_MS (3時間)。
@@ -350,43 +351,41 @@ export default function HomeScreen({ navigation }: any) {
       </KeyboardAvoidingView>
 
       {/*
-        「かー」が1件以上 → 締めの表示。期限は待たない。
-        ユーザーが閉じるまで残る (3時間経っても勝手には消えない)。
-        閉じずにアプリを落としても closedAt が入っていないので、
-        次の起動でまた出る。
+        送信した気分の締め。2 つの終わり方で同じカードを使う。
+        どちらも closedAt を入れるまで残るので、閉じずにアプリを
+        終了しても次回起動時にまた出る。
       */}
-      {phase === 'matched' && mood && (
-        <View style={styles.closingLayer}>
-          <View style={styles.closingCard}>
-            <Text style={styles.closingEmoji}>🍻</Text>
-            <Text style={styles.closingTitle}>
-              {mood.reactionCount}人から「かー」が届きました
-            </Text>
-            <Text style={styles.closingSub}>
-              気分が合いましたね。あとは直接どうぞ。
-            </Text>
-            {/*
-              「かー」が返ってきた後も残り時間を出し続ける。
-              1人返した後に別の友達が返す可能性があり、
-              「あと何時間受け付けているか」が分かる方が自然なため。
-              期限を過ぎたら 0 で止まるので、その時は文言を切り替える。
-            */}
-            <Text style={styles.closingCountdown}>
-              {remainingMs > 0
-                ? `あと ${formatRemaining(remainingMs)} 受付中`
-                : '受付は終了しました'}
-            </Text>
-            <Pressable
-              onPress={closeMood}
-              style={({ pressed }) => [
-                styles.closingBtn,
-                pressed && { opacity: 0.9 },
-              ]}
-            >
-              <Text style={styles.closingBtnText}>とじる</Text>
-            </Pressable>
-          </View>
-        </View>
+      {mood && (
+        <MoodClosingCard
+          visible={phase === 'matched'}
+          emoji="🍻"
+          title={`${mood.reactionCount}人から「かー」が届きました`}
+          sub="気分が合いましたね。あとは直接どうぞ。"
+          // 1人返した後に別の友達が返す可能性があるため、
+          // 締め表示に移った後も受付の残り時間を出し続ける。
+          footer={
+            remainingMs > 0
+              ? `あと ${formatRemaining(remainingMs)} 受付中`
+              : '受付は終了しました'
+          }
+          onClose={closeMood}
+        />
+      )}
+
+      {/*
+        3時間経過かつ「かー」0件。
+        以前は 2.5 秒で自動的に消えるポップアップだったため、その瞬間に
+        画面を見ていないと気づけず痕跡も残らなかった。返事があった時と
+        同じカードに揃え、閉じるまで残す。
+      */}
+      {mood && (
+        <MoodClosingCard
+          visible={phase === 'expiredEmpty'}
+          emoji="🍺"
+          title="気分じゃないかも？"
+          sub="今回は返事がありませんでした。またどうぞ。"
+          onClose={closeMood}
+        />
       )}
 
       <SendOverlay
@@ -395,14 +394,6 @@ export default function HomeScreen({ navigation }: any) {
         activityId={activity.id}
       />
 
-      {/*
-        3時間経過かつ「かー」0件の一言。フェードアウトし終わってから
-        closeMood() が走るので、「表示 → 通常画面へ」の順序になる。
-      */}
-      <WaitingExpiredNotice
-        visible={phase === 'expiredEmpty'}
-        onFinish={closeMood}
-      />
       {/* 届く相手が0人だった場合。送信は行われず、待機状態にも入らない。 */}
       <WaitingExpiredNotice
         visible={noRecipients}
@@ -420,54 +411,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontVariant: ['tabular-nums'],
   },
-  // 締めの表示。既存の配色 (藍・山吹・朱) の範囲で組む。
-  closingLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10,20,40,0.86)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 28,
-  },
-  closingCard: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: colors.aiDeep,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    paddingVertical: 28,
-    paddingHorizontal: 22,
-    alignItems: 'center',
-  },
-  closingEmoji: { fontSize: 56, marginBottom: 12 },
-  closingTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.yamabuki,
-    textAlign: 'center',
-  },
-  closingSub: {
-    marginTop: 8,
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-  },
-  closingCountdown: {
-    marginTop: 14,
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-  },
-  closingBtn: {
-    marginTop: 22,
-    alignSelf: 'stretch',
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: colors.shu,
-    alignItems: 'center',
-  },
-  closingBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   safe: {
     flex: 1,
