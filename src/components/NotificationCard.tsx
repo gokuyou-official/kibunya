@@ -90,19 +90,27 @@ export default function NotificationCard({ notification, onReact }: Props) {
 
   // 表示メッセージ
   //
-  // 本文は「かー」を返したかどうかで変えない。以前は reacted 用に
-  //   `${name}さんの${label}の気分 — かーした`
-  // という別テンプレートを用意していたため、返信後にカード本文が
-  // 「ひぐぼさんのちょい飲みの気分 — かーした」と、日本語として
-  // 意味の通らない連結に見える文字列になっていた。
-  // 対応済みであることは右側の「済👌」バッジ (と緑系の枠色) で表現する。
+  // 3 通りある。どれも主語は相手の名前だが、述語で「どちらが誘ったか」が
+  // 分かるようにする。以前は色 (金/緑) と「済👌」バッジだけが手がかりで、
+  // 一覧をスクロールすると両者が時系列に混ざり、文面からは方向が読めなかった。
   //
-  // NOTE: 旧 reacted テンプレートは "が"→"の" の助詞違いに加えて
-  // エリア表記も落としていたため、「かー」を返すと (新宿) 等が消えていた。
-  // 本文を一本化することでエリアも返信後まで残るようになる。
+  //   reaction        自分が誘い、相手が応じた   … 「〜してくれました」
+  //   kibun (未応答)   相手が誘い、自分は未応答   … 現状のまま
+  //   kibun (応答済)   相手が誘い、自分が応じた   … 「〜に「かー」しました」
+  //
+  // NOTE: 以前も reacted 用の別テンプレートがあったが、
+  //   `${name}さんの${label}の気分 — かーした`
+  // と後ろに継ぎ足す形だったため日本語として繋がらず、一度一本化した。
+  // 今回は文末まで作り直した独立した一文なのでその問題は起きない。
+  //
+  // 応答済みだけエリアを出さないのは、この段になるとカードが
+  // 「自分が動いた記録」でしかなく、どこで飲むかの情報はもう要らないため。
+  // 未応答カードには従来どおり残すので、判断に必要な間は消えない。
   let message: string;
   if (isReaction) {
-    message = `${safeSenderName}さんが「かー」しました ${activity.matchEmoji}`;
+    message = `${safeSenderName}さんが「かー」してくれました ${activity.matchEmoji}`;
+  } else if (reacted) {
+    message = `${safeSenderName}さんの気分に「かー」しました ${activity.matchEmoji}`;
   } else {
     const areaPart = notification.area ? ` (${notification.area})` : '';
     message = `${safeSenderName}さんが${activity.label}の気分${areaPart}`;
