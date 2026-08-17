@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -32,6 +34,8 @@ import FriendPill from '../components/FriendPill';
 import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
 import MoodClosingCard from '../components/MoodClosingCard';
+import IncomingMoodCard from '../components/IncomingMoodCard';
+import { useNotifications } from '../hooks/useNotifications';
 import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 
 // 待機時間の実体は useMyMood の MOOD_TTL_MS (3時間)。
@@ -71,6 +75,42 @@ export default function HomeScreen({ navigation }: any) {
   // 消えてしまい、「送ったのに待機が消えている」状態になっていた。
   const { mood, phase, remainingMs, closeMood } = useMyMood(currentUser?.uid);
   const waiting = phase === 'waiting';
+
+  // 届いている気分。バッジと同じ判定 (未応答 / 期限内 / 興味が合う) の結果を
+  // そのまま受け取る。ここで数え直すと、バッジと画面がずれる余地ができる。
+  const { pending, reactToNotification } = useNotifications(
+    currentUser?.uid,
+    profile.interests,
+  );
+  // 出すのは最新の1件だけ。ホームは送る画面なので、受信側の情報で
+  // 埋めない。残りは件数だけ添えてアラートタブに送る。
+  const incoming = pending[0];
+  const incomingActivity = useMemo(
+    () => (incoming ? getActivity(incoming.activity) : null),
+    [incoming],
+  );
+
+  // 「かー」を返す。処理は NotificationsScreen と同じ reactToNotification に
+  // 寄せる。返した時点で reactedBy が入り、pending から外れてカードは消える。
+  const handleIncomingReact = useCallback(async () => {
+    if (!currentUser || !incoming) return;
+    try {
+      const senderSnap = await getDoc(doc(db, 'users', incoming.senderId));
+      const senderFcm = senderSnap.data()?.fcmToken;
+      const act = getActivity(incoming.activity);
+      await reactToNotification(
+        incoming.id,
+        incoming.senderId,
+        senderFcm,
+        profile.name || 'フレンド',
+        act.id,
+        act.matchEmoji,
+        incoming.moodId,
+      );
+    } catch (e) {
+      console.error('handleIncomingReact error', e);
+    }
+  }, [currentUser, incoming, reactToNotification, profile.name]);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -325,6 +365,27 @@ export default function HomeScreen({ navigation }: any) {
               ? '気分は3時間でリセットされます'
               : '興味が合う友達に通知が届きます'}
           </Text>
+
+          {/*
+            届いている気分。0 件のときは領域ごと出さない (余白も残さない)。
+            自分の待機表示より下に置く。待っている最中でも、届いている方を
+            見落とさせないために消しはしない。
+          */}
+          {incoming && incomingActivity ? (
+            <IncomingMoodCard
+              senderName={
+                (typeof incoming.senderName === 'string' &&
+                  incoming.senderName.trim()) ||
+                'フレンド'
+              }
+              activityLabel={incomingActivity.label}
+              emoji={incomingActivity.waitEmoji}
+              area={incoming.area}
+              othersCount={pending.length - 1}
+              onReact={handleIncomingReact}
+              onPressOthers={() => navigation.navigate('Notifications')}
+            />
+          ) : null}
 
           <View style={styles.pillRow}>
             <ScrollView

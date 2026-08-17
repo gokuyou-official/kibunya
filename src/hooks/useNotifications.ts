@@ -35,12 +35,34 @@ export type Notification = {
   expiresAtMs?: number;
 };
 
+// 「まだ返事をしていない、生きている気分」か。
+//
+// バッジの件数とホーム画面の表示で同じ判定を使うために切り出す。
+// 期限の見方は NotificationCard の expired と同じ:
+//   expiresAtMs を持たない旧データは期限の概念が無いので切れない扱い。
+export function isPendingKibun(n: Notification, nowMs: number): boolean {
+  if (n.type !== 'kibun') return false;
+  if (n.reactedBy) return false;
+  if (typeof n.expiresAtMs === 'number' && nowMs >= n.expiresAtMs) return false;
+  return true;
+}
+
 export function useNotifications(
   currentUserId: string | undefined,
   interests?: ActivityId[],
 ) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  // 期限切れを時間の経過だけで反映させるための時計。
+  // これが無いと、Firestore に変更が来るまで期限切れの気分がバッジに
+  // 残り続ける (画面を開いたまま 3 時間経つ、が普通に起きる)。
+  // 期限は分単位で足りるので 60 秒間隔にして再描画を抑える。
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!currentUserId) return;
+    const t = setInterval(() => setNowMs(Date.now()), 60 * 1000);
+    return () => clearInterval(t);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!currentUserId) {
@@ -94,10 +116,22 @@ export function useNotifications(
     );
   }, [notifications, interests]);
 
-  const unreadCount = useMemo(
-    () => filtered.filter((n) => !n.isRead && !n.reactedBy).length,
-    [filtered],
+  // 「まだ返事をしていない、生きている気分」だけを数える。
+  //
+  // 以前は !isRead && !reactedBy だった。isRead はアラートタブを開いた瞬間に
+  // markAllAsRead で全部 true になるため、「かー」を返さないまま画面を閉じると
+  // バッジが消え、届いていること自体が分からなくなっていた。
+  // isRead は「見た」であって「対応した」ではないので、判定から外す。
+  //
+  // reaction (お礼通知) を除くのは、返事が来た側にやることが残らないため。
+  // 期限切れも除く。過ぎたものは送信側が既に締めていて、押しても届かない
+  // (カード側も NotificationCard で押せなくしている)。
+  const pending = useMemo(
+    () => filtered.filter((n) => isPendingKibun(n, nowMs)),
+    [filtered, nowMs],
   );
+
+  const unreadCount = pending.length;
 
   const markAsRead = useCallback(async (notificationId: string) => {
     try {
@@ -197,6 +231,8 @@ export function useNotifications(
 
   return {
     notifications: filtered,
+    // 未応答かつ期限内の気分。新しい順 (filtered が createdAt desc)。
+    pending,
     unreadCount,
     loading,
     markAsRead,
