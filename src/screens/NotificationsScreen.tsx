@@ -107,7 +107,7 @@ export default function NotificationsScreen({ route }: any) {
         <Text style={styles.title}>気分アラート</Text>
         {unreadCount > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>新着 {unreadCount}</Text>
+            <Text style={styles.badgeText}>未対応 {unreadCount}</Text>
           </View>
         )}
       </View>
