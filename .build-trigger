@@ -7,19 +7,20 @@
 # により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない。
 # 一方 CFBundleShortVersionString は app.json の expo.version がそのまま
 # 使われるため、バージョンを上げる時は app.json 側を編集する。
-build-request: 1.0.4 の Build 88（バージョンは据え置き）
-requested-at: 2026-08-14T00:10:00Z
+build-request: 1.0.4 の Build 89（バージョンは据え置き）
+requested-at: 2026-08-14T23:55:00Z
 reason: |
-  Build 87 (外部テスター審査 APPROVED、TestFlight 配信中) の元になった
-  0271b16 以降に main へ入った 2 件の変更を取り込む。
-  app.json の version は 1.0.4 のまま。ビルド番号のみ EAS が 88 に進める。
+  Build 88 (App Store 公開済み / TestFlight 配信中) 以降に main へ入った
+  「届いている気分の見落とし対策」3 件を TestFlight に載せる。
+  app.json の version は 1.0.4 のまま。ビルド番号のみ EAS が進める。
 
-  含まれる変更:
-  - a660044 待機中の説明を「気分は3時間経過後リセットされます」に修正
-           （「友達の返事か、3時間の経過を待ちます」からの置き換え）
-  - 1ccae8f 「気分じゃないかも？」を 2.5 秒で消えるポップアップから
-           「とじる」を押すまで残るカードに変更（PR #14 / 3ac30be でマージ）
-           🍻 の締め表示と MoodClosingCard を共有し見た目を揃えた
+  含まれる変更 (6d4491f のマージ):
+  - dfb77c5 アラートの文面で「どちらが誘ったか」を分かるようにする
+           「〜が「かー」してくれました」/「〜の気分に「かー」しました」
+  - 31fd8b1 バッジ判定から isRead を外し、未応答かつ期限内だけを数える。
+           ホーム画面に「届いています」のカードを追加し、その場で
+           「かー」を返せるようにした
+  - 73e599d アラート見出しのバッジを「新着」から「未対応」に
 
-  含まれない（アプリ本体に影響しない）:
-  - a484923 ASC スクリーンショット確認スクリプトの調整（scripts のみ）
+  Firestore のデータ構造・セキュリティルールは変更なし。
+  ルールのデプロイ (firestore-rules-deploy.yml) は発火しない。
