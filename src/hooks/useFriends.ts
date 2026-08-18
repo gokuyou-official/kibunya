@@ -6,9 +6,11 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { ActivityId } from '../config/activities';
 
 export type Friend = {
   id: string;
@@ -16,6 +18,12 @@ export type Friend = {
   fcmToken?: string;
   lastSeen?: any;
   isOnline: boolean;
+  // 通知対象フラグ。未定義の旧データは true (有効) として扱う。
+  active: boolean;
+  // 相手が選んでいる気分の種類。送信側で「その気分に興味がある人」だけに
+  // 絞るために持つ。ここで持っておけば送信時に getDoc を追加しなくて済む
+  // (users/{friendId} は下でどのみち読んでいる)。
+  interests: ActivityId[];
 };
 
 // 5分以内にlastSeen更新があればオンライン扱い
@@ -39,16 +47,34 @@ export function useFriends(currentUserId: string | undefined) {
           const list: Friend[] = [];
           for (const d of snap.docs) {
             const friendId = d.id;
+            const friendListData = d.data() ?? {};
+            // active が undefined の旧データは true として扱う (後方互換)。
+            // 明示的に false が入っている時だけ無効。
+            const active = friendListData.active !== false;
             const uSnap = await getDoc(doc(db, 'users', friendId));
             const u = uSnap.data() ?? {};
             const lastSeenMs = u.lastSeen?.toMillis?.() ?? 0;
             const isOnline = Date.now() - lastSeenMs < ONLINE_THRESHOLD_MS;
+            // ⚠️ name フォールバックは `??` ではなく `||` チェインを使う。
+            // `u.name ?? 'フレンド'` だと空文字 '' を素通しして表示が空になる
+            // (新規メール登録ユーザーで実際に発生していた)。
+            // 優先度: trim 後の name → email の @ より前 → 'フレンド'
+            const emailLocal =
+              typeof u.email === 'string' ? u.email.split('@')[0] : '';
+            const friendName =
+              (typeof u.name === 'string' && u.name.trim()) ||
+              emailLocal ||
+              'フレンド';
             list.push({
               id: friendId,
-              name: u.name ?? 'フレンド',
+              name: friendName,
               fcmToken: u.fcmToken,
               lastSeen: u.lastSeen,
               isOnline,
+              active,
+              // 旧データや未設定は空配列。空 = 絞らない扱い
+              // (matchesInterest の仕様に合わせる)。
+              interests: Array.isArray(u.interests) ? u.interests : [],
             });
           }
           setFriends(list);
@@ -71,13 +97,17 @@ export function useFriends(currentUserId: string | undefined) {
     async (friendId: string) => {
       if (!currentUserId || !friendId || currentUserId === friendId) return;
       try {
+        // ⚠️ merge: true は必須。理由は inviteLink.ts の同処理のコメント参照
+        // (merge なしだと既存の active が消え、相手側は rules で拒否される)。
         await setDoc(
           doc(db, 'friends', currentUserId, 'friendsList', friendId),
           { addedAt: serverTimestamp() },
+          { merge: true },
         );
         await setDoc(
           doc(db, 'friends', friendId, 'friendsList', currentUserId),
           { addedAt: serverTimestamp() },
+          { merge: true },
         );
       } catch (e) {
         console.error('addFriend error', e);
@@ -87,5 +117,23 @@ export function useFriends(currentUserId: string | undefined) {
     [currentUserId],
   );
 
-  return { friends, loading, addFriend };
+  // 自分側だけ更新 (片方向)。相手側の active は触らない。
+  // 自分が通知を送る/送らないの判断材料なので、相手の同意は不要。
+  const setFriendActive = useCallback(
+    async (friendId: string, active: boolean) => {
+      if (!currentUserId || !friendId) return;
+      try {
+        await updateDoc(
+          doc(db, 'friends', currentUserId, 'friendsList', friendId),
+          { active },
+        );
+      } catch (e) {
+        console.error('setFriendActive error', e);
+        throw e;
+      }
+    },
+    [currentUserId],
+  );
+
+  return { friends, loading, addFriend, setFriendActive };
 }

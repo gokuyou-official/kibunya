@@ -16,10 +16,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 import { colors } from '../config/colors';
-import { ActivityId, getActivity } from '../config/activities';
+import { ActivityId, getActivity, getEnabledActivityIds } from '../config/activities';
 import { useAuth } from '../hooks/useAuth';
 import { useFriends } from '../hooks/useFriends';
 import { useProfile } from '../hooks/useProfile';
@@ -28,28 +31,86 @@ import { sendPushNotification } from '../utils/pushNotifications';
 import SendOverlay from '../components/SendOverlay';
 import ActivityTab from '../components/ActivityTab';
 import FriendPill from '../components/FriendPill';
+import { matchesInterest } from '../utils/interestMatch';
+import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
+import MoodClosingCard from '../components/MoodClosingCard';
+import IncomingMoodCard from '../components/IncomingMoodCard';
+import { useNotifications } from '../hooks/useNotifications';
+import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
+
+// 待機時間の実体は useMyMood の MOOD_TTL_MS (3時間)。
+// ここでは再エクスポートせず、必要な箇所で MOOD_TTL_MS を使う。
 
 export default function HomeScreen({ navigation }: any) {
   const { currentUser } = useAuth();
   const { profile } = useProfile(currentUser?.uid);
   const { friends } = useFriends(currentUser?.uid);
 
-  // アクティブタブ: interests 先頭をデフォルトに
+  // 表示対象: ユーザーの interests と enabled の積集合
+  const visibleIds = useMemo<ActivityId[]>(() => {
+    const enabled = new Set(getEnabledActivityIds());
+    return profile.interests.filter((id) => enabled.has(id));
+  }, [profile.interests]);
+  const singleActivity = visibleIds.length === 1;
+
+  // アクティブタブ: visibleIds 先頭をデフォルトに
   const [activeId, setActiveId] = useState<ActivityId | null>(null);
   useEffect(() => {
-    if (!activeId && profile.interests.length > 0) {
-      setActiveId(profile.interests[0]);
+    if (!activeId && visibleIds.length > 0) {
+      setActiveId(visibleIds[0]);
     }
-    if (activeId && !profile.interests.includes(activeId)) {
-      setActiveId(profile.interests[0] ?? null);
+    if (activeId && !visibleIds.includes(activeId)) {
+      setActiveId(visibleIds[0] ?? null);
     }
-  }, [profile.interests, activeId]);
+  }, [visibleIds, activeId]);
 
-  // 送信後の「待ちますかー」状態
-  const [waiting, setWaiting] = useState(false);
   const [overlay, setOverlay] = useState(false);
   const [sending, setSending] = useState(false);
   const [area, setArea] = useState('');
+  // 届く相手が0人だった時の一言を出している間 true。
+  // 送信自体を行わないので mood とは無関係。
+  const [noRecipients, setNoRecipients] = useState(false);
+
+  // 送信後の状態は Firestore が持つ。ローカル state だとアプリを落とすと
+  // 消えてしまい、「送ったのに待機が消えている」状態になっていた。
+  const { mood, phase, remainingMs, closeMood } = useMyMood(currentUser?.uid);
+  const waiting = phase === 'waiting';
+
+  // 届いている気分。バッジと同じ判定 (未応答 / 期限内 / 興味が合う) の結果を
+  // そのまま受け取る。ここで数え直すと、バッジと画面がずれる余地ができる。
+  const { pending, reactToNotification } = useNotifications(
+    currentUser?.uid,
+    profile.interests,
+  );
+  // 出すのは最新の1件だけ。ホームは送る画面なので、受信側の情報で
+  // 埋めない。残りは件数だけ添えてアラートタブに送る。
+  const incoming = pending[0];
+  const incomingActivity = useMemo(
+    () => (incoming ? getActivity(incoming.activity) : null),
+    [incoming],
+  );
+
+  // 「かー」を返す。処理は NotificationsScreen と同じ reactToNotification に
+  // 寄せる。返した時点で reactedBy が入り、pending から外れてカードは消える。
+  const handleIncomingReact = useCallback(async () => {
+    if (!currentUser || !incoming) return;
+    try {
+      const senderSnap = await getDoc(doc(db, 'users', incoming.senderId));
+      const senderFcm = senderSnap.data()?.fcmToken;
+      const act = getActivity(incoming.activity);
+      await reactToNotification(
+        incoming.id,
+        incoming.senderId,
+        senderFcm,
+        profile.name || 'フレンド',
+        act.id,
+        act.matchEmoji,
+        incoming.moodId,
+      );
+    } catch (e) {
+      console.error('handleIncomingReact error', e);
+    }
+  }, [currentUser, incoming, reactToNotification, profile.name]);
 
   const activity = useMemo(() => getActivity(activeId ?? 'drinking'), [activeId]);
 
@@ -61,16 +122,59 @@ export default function HomeScreen({ navigation }: any) {
     Animated.spring(scale, { toValue: 1, friction: 5, useNativeDriver: true }).start();
   };
 
+  // 送信対象: active なフレンドだけ。フレンドタブのトグルで OFF にされた
+  // 相手はそもそも notification doc / push 通知の対象外。
+  const activeFriends = useMemo(
+    () => friends.filter((f) => f.active),
+    [friends],
+  );
+
+  // 実際に送る相手: active かつ「その気分に興味がある人」。
+  // 以前は受信側でしか絞っていなかったため、興味の無い相手にも doc と push が
+  // 飛んでいた。判定は受信側と同じ述語 (matchesInterest) を使う。
+  const recipients = useMemo(
+    () =>
+      activeId
+        ? activeFriends.filter((f) => matchesInterest(f.interests, activeId))
+        : [],
+    [activeFriends, activeId],
+  );
+
   const handleSend = useCallback(async () => {
     if (!currentUser || sending || !activeId) return;
+    // 届く相手が1人もいないなら、doc も push も作らずに終わる。
+    // 「送ったのに誰にも届いていない」状態 (待機だけ始まる) を作らないため。
+    if (recipients.length === 0) {
+      setNoRecipients(true);
+      return;
+    }
     setSending(true);
     try {
       const myName = profile.name || 'フレンド';
-      // 友達全員(興味に activeId を持つ人だけ受信する設計だが、
-      // FCM送信時は全員にtoken送る。通知フィルタは受信側で useNotifications が担う)
+      // 先に mood を作る。送信後の状態はこのドキュメントが持つ。
+      // expiresAt はクライアントで計算した固定値。serverTimestamp は
+      // 「今」しか入れられず未来時刻を作れないため。
+      // recipientIds は「かー」を返せる人の判定にルール側で使う。
+      const expiresAt = Timestamp.fromMillis(Date.now() + MOOD_TTL_MS);
+      const moodRef = await addDoc(collection(db, 'moods'), {
+        senderId: currentUser.uid,
+        senderName: myName,
+        activity: activeId,
+        area: area.trim() || null,
+        recipientIds: recipients.map((f) => f.id),
+        createdAt: serverTimestamp(),
+        expiresAt,
+        // null で作る。締めた時に closedAt が入り、購読クエリから外れる。
+        closedAt: null,
+      });
+      // active なフレンドにだけ Firestore notification を書き込み、push を送る。
+      // tokens と notificationIds は同じインデックスで保持し、受信側がタップ
+      // したときに自分宛の Firestore notification doc に飛べるようにする。
+      // 受信側 useNotifications が更に興味でフィルタする 2 段構成は維持。
       const tokens: string[] = [];
-      for (const f of friends) {
-        await addDoc(collection(db, 'notifications'), {
+      const notificationIds: string[] = [];
+      for (const f of recipients) {
+        const docRef = await addDoc(collection(db, 'notifications'), {
           senderId: currentUser.uid,
           senderName: myName,
           receiverId: f.id,
@@ -80,31 +184,58 @@ export default function HomeScreen({ navigation }: any) {
           createdAt: serverTimestamp(),
           isRead: false,
           reactedBy: null,
+          // 受信側が「かー」を書き込む先と、期限切れ表示の判定に使う。
+          moodId: moodRef.id,
+          expiresAt,
         });
-        if (f.fcmToken) tokens.push(f.fcmToken);
+        if (f.fcmToken) {
+          tokens.push(f.fcmToken);
+          notificationIds.push(docRef.id);
+        }
       }
       if (tokens.length > 0) {
-        const body = area.trim()
-          ? `${myName}さんが${activity.label}の気分(${area.trim()})${activity.waitEmoji}`
-          : `${myName}さんが${activity.label}の気分${activity.waitEmoji}`;
-        await sendPushNotification(tokens, 'KIBUNYA', body);
+        const areaPart = area.trim() ? ` (${area.trim()})` : '';
+        const body = `${myName}さん、いきますかー${areaPart}${activity.waitEmoji}`;
+        await sendPushNotification(tokens, 'KIBUNYA', body, {
+          notificationIds,
+          type: 'kibun',
+        });
       }
+      // 待機状態は mood の購読 (useMyMood) が拾うので、ここでは立てない。
       setOverlay(true);
-      setWaiting(true);
     } catch (e: any) {
       console.error('handleSend error', e);
       Alert.alert('送信失敗', 'もう一度お試しください');
     } finally {
       setSending(false);
     }
-  }, [currentUser, friends, sending, activeId, profile.name, area, activity]);
+  }, [currentUser, recipients, sending, activeId, profile.name, area, activity]);
 
-  const cancelWaiting = () => {
-    setWaiting(false);
-  };
+  // ★ 「気分タブの再タップで待機を解除する」経路は廃止した。
+  //   送信後の状態がローカル state だった頃は表示を戻すだけだったが、
+  //   moods (Firestore) が真実になってからは closedAt を立てて
+  //   送信そのものを終了させる操作になっていた。押した本人に自覚が無いまま
+  //   取り消しが起きるうえ、待機画面に二度と戻れなくなる。
+  //   取り消し機能は仕様として持たないため、route.params.resetAt ごと削除。
 
-  // 興味が未設定の場合
-  if (profile.interests.length === 0) {
+  // ★ 「かー」を受け取った時に mood を閉じる処理は廃止した。
+  //   演出 (MatchOverlay) はあくまで「返事が来た」という通知であって、
+  //   送信の寿命とは別物。演出を閉じたら送信も終わる、という結び付けを
+  //   やめ、mood は 🍻 の締め表示として残るようにした。
+  //   これに伴い WaitingResetContext は利用者が居なくなったため削除。
+
+  // 待機解除 (4): 送信から3時間経過。
+  //
+  // 期限判定は useMyMood が mood.expiresAt と現在時刻の比較で行う。
+  // 以前は setTimeout + AppState でローカルに測っていたが、
+  // 期限そのものを Firestore に持たせたので、復帰時に再計算するだけで
+  // 済むようになった (タイマーのズレを気にしなくてよい)。
+  //
+  // 「かー」が0件で期限切れ → 一言を出して締める。
+  // 1件以上 → 締め表示を出し、ユーザーが閉じるまで残す (下の JSX)。
+
+  // 表示可能なアクティビティが無い場合 (interests 未設定 or enabled なものが無い)
+  if (visibleIds.length === 0) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.empty}>
@@ -144,16 +275,19 @@ export default function HomeScreen({ navigation }: any) {
         </Pressable>
       </View>
 
-      <View style={styles.tabRow}>
-        <ActivityTab
-          availableIds={profile.interests}
-          activeId={activeId}
-          onChange={(id) => {
-            setActiveId(id);
-            setWaiting(false);
-          }}
-        />
-      </View>
+      {!singleActivity && (
+        <View style={styles.tabRow}>
+          <ActivityTab
+            availableIds={visibleIds}
+            activeId={activeId}
+            // ★ ここでも待機を解除していたが、同じ理由で外した。
+            //   気分の種類を見比べただけで送信が終了するのは事故になる。
+            //   (現在は有効なアクティビティが1つでこの行自体が描画されないが、
+            //    2つ目を有効にした瞬間に表面化するため先に直しておく)
+            onChange={(id) => setActiveId(id)}
+          />
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -163,14 +297,15 @@ export default function HomeScreen({ navigation }: any) {
           contentContainerStyle={styles.center}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.emojiBox}>
-            <Text style={styles.emoji}>{activity.waitEmoji}</Text>
+          <View style={[styles.emojiBox, singleActivity && styles.emojiBoxLarge]}>
+            <Text style={[styles.emoji, singleActivity && styles.emojiLarge]}>
+              {activity.waitEmoji}
+            </Text>
           </View>
 
-          <Text style={styles.title}>
+          <Text style={[styles.title, waiting && styles.titleWaiting]}>
             {waiting ? '待ちますかー' : activity.sendCopy}
           </Text>
-          <Text style={styles.caption}>{activity.waitCopy}</Text>
 
           {!waiting && (
             <View style={styles.areaField}>
@@ -186,20 +321,26 @@ export default function HomeScreen({ navigation }: any) {
             </View>
           )}
 
-          <Animated.View style={{ transform: [{ scale }], width: '100%', maxWidth: 320 }}>
+          <Animated.View
+            style={[
+              { transform: [{ scale }], width: '100%', maxWidth: 320 },
+              waiting && { marginTop: 16 },
+            ]}
+          >
             {waiting ? (
-              <Pressable
-                onPress={cancelWaiting}
-                style={({ pressed }) => [
-                  styles.ctaWaiting,
-                  pressed && { opacity: 0.9 },
-                ]}
-              >
-                <Text style={styles.ctaWaitingText}>
-                  待ちますかー {activity.waitEmoji}
+              // 待機中は「状態表示」だけを出す。解除は
+              //   1. 友達から「かー」が返ってきた時の自動解除
+              //   2. 「気分」タブの再タップ
+              // の2経路があるため、画面内に取り消しボタンは置かない。
+              <View style={styles.waitingStatus} pointerEvents="none">
+                <Text style={styles.waitingStatusText}>
+                  友達の「かー」を待ってます {activity.waitEmoji}
                 </Text>
-                <Text style={styles.ctaWaitingSub}>タップでキャンセル</Text>
-              </Pressable>
+                {/* カウントダウンは期限まで止めずに動かす */}
+                <Text style={styles.waitingCountdown}>
+                  あと {formatRemaining(remainingMs)}
+                </Text>
+              </View>
             ) : (
               <Pressable
                 onPressIn={pressIn}
@@ -221,9 +362,30 @@ export default function HomeScreen({ navigation }: any) {
 
           <Text style={styles.hint}>
             {waiting
-              ? '友達の「かー」を待ってます'
+              ? '気分は3時間でリセットされます'
               : '興味が合う友達に通知が届きます'}
           </Text>
+
+          {/*
+            届いている気分。0 件のときは領域ごと出さない (余白も残さない)。
+            自分の待機表示より下に置く。待っている最中でも、届いている方を
+            見落とさせないために消しはしない。
+          */}
+          {incoming && incomingActivity ? (
+            <IncomingMoodCard
+              senderName={
+                (typeof incoming.senderName === 'string' &&
+                  incoming.senderName.trim()) ||
+                'フレンド'
+              }
+              activityLabel={incomingActivity.label}
+              emoji={incomingActivity.waitEmoji}
+              area={incoming.area}
+              othersCount={pending.length - 1}
+              onReact={handleIncomingReact}
+              onPressOthers={() => navigation.navigate('Notifications')}
+            />
+          ) : null}
 
           <View style={styles.pillRow}>
             <ScrollView
@@ -235,8 +397,12 @@ export default function HomeScreen({ navigation }: any) {
                 <Text style={styles.noFriends}>
                   まだ友達がいません。フレンドタブから招待してね
                 </Text>
+              ) : activeFriends.length === 0 ? (
+                <Text style={styles.noFriends}>
+                  通知対象のフレンドがいません (フレンドタブで ON に)
+                </Text>
               ) : (
-                friends.map((f) => (
+                activeFriends.map((f) => (
                   <FriendPill key={f.id} name={f.name} online={f.isOnline} />
                 ))
               )}
@@ -245,16 +411,68 @@ export default function HomeScreen({ navigation }: any) {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/*
+        送信した気分の締め。2 つの終わり方で同じカードを使う。
+        どちらも closedAt を入れるまで残るので、閉じずにアプリを
+        終了しても次回起動時にまた出る。
+      */}
+      {mood && (
+        <MoodClosingCard
+          visible={phase === 'matched'}
+          emoji="🍻"
+          title={`${mood.reactionCount}人から「かー」が届きました`}
+          sub="気分が合いましたね。あとは直接どうぞ。"
+          // 1人返した後に別の友達が返す可能性があるため、
+          // 締め表示に移った後も受付の残り時間を出し続ける。
+          footer={
+            remainingMs > 0
+              ? `あと ${formatRemaining(remainingMs)} 受付中`
+              : '受付は終了しました'
+          }
+          onClose={closeMood}
+        />
+      )}
+
+      {/*
+        3時間経過かつ「かー」0件。
+        以前は 2.5 秒で自動的に消えるポップアップだったため、その瞬間に
+        画面を見ていないと気づけず痕跡も残らなかった。返事があった時と
+        同じカードに揃え、閉じるまで残す。
+      */}
+      {mood && (
+        <MoodClosingCard
+          visible={phase === 'expiredEmpty'}
+          emoji="🍺"
+          title="気分じゃないかも？"
+          sub="今回は返事がありませんでした。またどうぞ。"
+          onClose={closeMood}
+        />
+      )}
+
       <SendOverlay
         visible={overlay}
         onClose={() => setOverlay(false)}
         activityId={activity.id}
+      />
+
+      {/* 届く相手が0人だった場合。送信は行われず、待機状態にも入らない。 */}
+      <WaitingExpiredNotice
+        visible={noRecipients}
+        onFinish={() => setNoRecipients(false)}
+        message="いま気分の合う友達がいません"
       />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  waitingCountdown: {
+    marginTop: 6,
+    fontSize: 13,
+    color: colors.textMuted,
+    fontVariant: ['tabular-nums'],
+  },
+
   safe: {
     flex: 1,
     backgroundColor: colors.ai,
@@ -315,16 +533,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  emojiBoxLarge: {
+    width: 200,
+    height: 200,
+    borderRadius: 48,
+    marginTop: 8,
+    marginBottom: 16,
+  },
   emoji: { fontSize: 72 },
+  emojiLarge: { fontSize: 110 },
   title: {
     fontSize: 22,
     color: colors.cream,
     fontWeight: '600',
   },
-  caption: {
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
+  titleWaiting: {
+    // 待機中はこの下に状態カードが入るので、以前ほど余白を空けない
     marginBottom: 4,
   },
   areaField: {
@@ -360,21 +584,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  ctaWaiting: {
-    backgroundColor: colors.yamabuki,
-    paddingVertical: 20,
-    borderRadius: 20,
+  // 状態表示: 山吹の縁取りで「光って待っている」感を出す。押せない。
+  waitingStatus: {
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.yamabuki,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
     alignItems: 'center',
   },
-  ctaWaitingText: {
-    color: colors.ai,
-    fontSize: 18,
+  waitingStatusText: {
+    color: colors.yamabuki,
+    fontSize: 15,
     fontWeight: '700',
-  },
-  ctaWaitingSub: {
-    color: 'rgba(26,46,85,0.65)',
-    fontSize: 11,
-    marginTop: 2,
   },
   hint: {
     fontSize: 11,

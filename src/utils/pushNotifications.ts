@@ -63,23 +63,48 @@ export async function registerForPushNotifications(userId: string): Promise<void
   }
 }
 
+// 通知タップ時のディープリンク用 payload
+export type PushNotificationData = {
+  // タップ時にアラートタブで該当カードへスクロール/ハイライトするための ID
+  notificationId?: string;
+  // 通知の種類 (kibun=送信通知 / reaction=リアクション通知)
+  type?: 'kibun' | 'reaction';
+  // 受信者ごとに個別の Firestore notification doc が作られるため、
+  // tokensと同じ並びの notificationIds を渡し、tokenごとに割り当てる
+  [key: string]: any;
+};
+
 // Expo Push API 経由で通知送信
+// notificationIds が指定されている場合は tokens と同じインデックスで対応付け、
+// 各受信者の data に自分用の notificationId を埋める。
 export async function sendPushNotification(
   tokens: string[],
   title: string,
   body: string,
+  options?: {
+    notificationIds?: string[];
+    type?: 'kibun' | 'reaction';
+  },
 ): Promise<void> {
   if (!tokens || tokens.length === 0) return;
   try {
     const messages = tokens
-      .filter((t) => typeof t === 'string' && t.length > 0)
-      .map((to) => ({
-        to,
-        sound: 'default',
-        title,
-        body,
-        priority: 'high',
-      }));
+      .map((to, idx) => ({ to, idx }))
+      .filter(({ to }) => typeof to === 'string' && to.length > 0)
+      .map(({ to, idx }) => {
+        const data: PushNotificationData = {};
+        if (options?.type) data.type = options.type;
+        const nid = options?.notificationIds?.[idx];
+        if (nid) data.notificationId = nid;
+        return {
+          to,
+          sound: 'default',
+          title,
+          body,
+          priority: 'high',
+          data,
+        };
+      });
     if (messages.length === 0) return;
 
     await fetch('https://exp.host/--/api/v2/push/send', {

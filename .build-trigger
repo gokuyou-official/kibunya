@@ -1,0 +1,35 @@
+# eas-local-build.yml 起動用マーカーファイル。
+# このファイルを変更して main に push すると、macOS ローカルビルド +
+# TestFlight 提出 (profile=production, auto_submit=true) が起動する。
+# クラウドビルド (eas-build.yml) は workflow_dispatch 専用なので起動しない。
+#
+# ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
+# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない。
+#
+# ★ CFBundleShortVersionString は app.json の expo.version がそのまま使われる。
+#   公開済みのバージョンにはビルドを追加できない (トレインが閉じる) ため、
+#   App Store に出した後は必ず expo.version を上げてからビルドすること。
+build-request: 1.0.5 の初回ビルド
+requested-at: 2026-08-18T01:40:00Z
+reason: |
+  直前の 1.0.4 でのビルドは altool で Apple に拒否された。
+
+    90186 Invalid Pre-Release Train.
+          The train version '1.0.4' is closed for new build submissions
+    90062 CFBundleShortVersionString [1.0.4] must contain a higher version
+          than that of the previously approved version [1.0.4]
+
+  1.0.4 (Build 88) を App Store に公開したことでトレインが閉じたため。
+  autoIncrement はビルド番号しか上げず、expo.version は据え置きだったので
+  同じ閉じたトレインに投げ続けていた。app.json の version を 1.0.5 に上げる。
+
+  含まれる変更 (6d4491f のマージ / 1.0.4 公開分からの差分):
+  - dfb77c5 アラートの文面で「どちらが誘ったか」を分かるようにする
+           「〜が「かー」してくれました」/「〜の気分に「かー」しました」
+  - 31fd8b1 バッジ判定から isRead を外し、未応答かつ期限内だけを数える。
+           ホーム画面に「届いています」のカードを追加し、その場で
+           「かー」を返せるようにした
+  - 73e599d アラート見出しのバッジを「新着」から「未対応」に
+
+  配信先は TestFlight まで。App Store 本審査への提出は行わない。
+  Firestore のデータ構造・セキュリティルールは変更なし。

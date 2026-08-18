@@ -1,0 +1,194 @@
+name: EAS Build (local on macOS) + Submit
+
+# macOS runner 上で `eas build --local` を実行し iOS IPA をローカルビルドする
+# ワークフロー。EAS Cloud Build の枠 (月次 quota) を消費しない。
+#
+# 仕組み:
+#   1) macos-latest で Xcode/CocoaPods が使えるため、--local で本物の iOS
+#      native build を実行できる (cloud に投げない)。
+#   2) 認証情報 (cert / provisioning profile) は EXPO_TOKEN 経由で EAS service
+#      から自動取得 (build credit を消費せず credential サービスだけ利用)。
+#   3) submit は別ステップで `eas submit --path` を実行し、生成した IPA を
+#      App Store Connect に投入。submit は元から build credit 非消費。
+#
+# 必須 secret:
+#   EXPO_TOKEN      Expo / EAS 認証
+#   ASC_KEY_ID      ASC API key の Key ID (eas submit 非対話化に使用)
+#   ASC_ISSUER_ID   ASC API key の Issuer ID
+#   ASC_P8_KEY      AuthKey_<KEY_ID>.p8 の本文 (PEM)
+#
+# 注意:
+#   - public リポジトリの macOS runner は無料枠が広いが、ビルドは長め
+#     (queue+30-50分)。 timeout-minutes は余裕を持って 120 に設定。
+#   - submit は build profile に関わらず submit.production の config を使う
+#     (eas.json で submit は production しか定義されていないため)。
+on:
+  # .build-trigger (マーカーファイル) を変更した main への push でのみ発火。
+  # Web UI での workflow_dispatch 操作なしにビルドを起動できるようにする。
+  # コード変更の通常 push では発火しない (paths 限定)。
+  # push 起動時は profile=production / auto_submit=true 相当で動作する
+  # (job env の BUILD_PROFILE / AUTO_SUBMIT が inputs 未指定時に fallback)。
+  push:
+    branches:
+      - main
+    paths:
+      - '.build-trigger'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile (production = TestFlight 適合、preview = Ad Hoc 内部)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+      auto_submit:
+        description: 'ビルド成功後、自動で App Store Connect に submit する'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: eas-local-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Local iOS build (macOS) + optional submit
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # expo-doctor は EAS Cloud Build 側でしか効かないので明示的に skip
+      EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '1'
+      # push (マーカーファイル) 起動時は inputs が空になるため fallback を持つ。
+      # workflow_dispatch 起動時は選択された inputs がそのまま優先される。
+      BUILD_PROFILE: ${{ inputs.profile || 'production' }}
+      AUTO_SUBMIT: ${{ inputs.auto_submit || 'true' }}
+    steps:
+      - name: Validate EXPO_TOKEN
+        run: |
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "::error::EXPO_TOKEN secret is not set"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List installed Xcode versions (debug)
+        run: ls -1 /Applications | grep -i '^Xcode' || true
+
+      - name: Select latest-stable Xcode (iOS 26 SDK required for expo-notifications)
+        # Run #7 で expo-notifications@55.0.23 の DateComponentsSerializer.swift:9
+        # が DateComponents.isRepeatedDay (iOS 26 API) を参照していることが判明。
+        # 古い iPhoneOS SDK には存在しないため iOS 26 SDK を持つ Xcode が必要。
+        #
+        # 2026-07-15 (run #20) 追記: それまで '26.1' に固定していたが、
+        # macos-latest ランナーイメージが macos-15-arm64 → macos-26-arm64
+        # (macOS 26.4) に切り替わったことで発生した "iOS 26.1 Platform Not
+        # Installed." で archive 失敗。新イメージには Xcode 26.0〜26.6 系が
+        # 複数入っているが、ピン留めしたポイントリリースはアプリ本体のみで
+        # iOS Platform サポートファイルが未展開の "軽量版" だった模様。
+        # ホスト自体が macOS 26.4 である以上、GitHub がフル装備 (Platform 込み)
+        # を保証する 'latest-stable' を使えば同じ iOS 26 SDK 要件を満たしつつ
+        # 個別ポイントリリースの provisioning 状態に依存しなくなる。
+        #
+        # 懸念: Xcode の Swift がさらに新しくなり (Swift 7 系?) Swift 5 mode 互換が
+        # 落ちている可能性。ただし plugins/withSwiftConcurrencyWorkaround.js の
+        # Podfile post_install で全 Pod target に SWIFT_VERSION='5.0' を強制し、
+        # 全 .swift ファイルの Swift 6+ isolated conformance を regex で
+        # Swift 5 互換に変換しているため、原理的にこのまま通る想定。
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Verify Xcode
+        run: xcodebuild -version
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # NOTE: expo-modules-core への source/Podfile パッチは
+      # plugins/withSwiftConcurrencyWorkaround.js (Expo config plugin) が
+      # `eas build --local` 内の prebuild 時に temp dir に対して適用する。
+      # workflow 側で外側 node_modules を patch しても EAS local build は
+      # 別 temp dir で fresh install するため反映されない (Run #4 で確認済)。
+
+      - name: Build IPA locally (no EAS build credit)
+        # --local で macOS runner 上で native build を回す。
+        # --non-interactive を入れないと "Y/n?" 系プロンプトで停止する。
+        run: |
+          eas build \
+            --local \
+            --platform ios \
+            --profile "$BUILD_PROFILE" \
+            --non-interactive \
+            --output "./build.ipa"
+
+      - name: Verify IPA exists
+        run: |
+          if [ ! -f "./build.ipa" ]; then
+            echo "::error::build.ipa が生成されていません"
+            exit 1
+          fi
+          ls -lh ./build.ipa
+
+      - name: Upload IPA artifact
+        # submit が失敗しても IPA を再利用できるよう artifact 保管。
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-ipa-${{ env.BUILD_PROFILE }}-${{ github.run_id }}
+          path: ./build.ipa
+          retention-days: 7
+
+      - name: Upload IPA to App Store Connect (xcrun altool)
+        # Run #8/#9 で eas.json への ASC API key 注入は schema validation で
+        # reject される事が判明 (flat / nested 両形式とも "not allowed")。
+        # eas-cli 経由は諦め、Xcode バンドルの altool で直接アップロードする。
+        # altool は ASC API key 認証 (--apiKey / --apiIssuer) を flag 直渡しで
+        # サポートし、P8 ファイルは ~/.appstoreconnect/private_keys/
+        # AuthKey_<KEY_ID>.p8 の規約パスから自動読込。
+        if: ${{ env.AUTO_SUBMIT == 'true' }}
+        env:
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          if [ -z "${ASC_P8_KEY:-}" ] || [ -z "${ASC_KEY_ID:-}" ] || [ -z "${ASC_ISSUER_ID:-}" ]; then
+            echo "::error::ASC_P8_KEY / ASC_KEY_ID / ASC_ISSUER_ID secrets が不足"
+            exit 1
+          fi
+
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          mkdir -p "$KEY_DIR"
+          printf '%s' "$ASC_P8_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          # altool で IPA をアップロード。--type ios で iOS app と明示。
+          xcrun altool --upload-app \
+            --type ios \
+            --file ./build.ipa \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -rf "$HOME/.appstoreconnect/private_keys"
