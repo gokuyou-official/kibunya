@@ -9,8 +9,12 @@ import { db } from '../config/firebase';
 // フォアグラウンドで通知を受け取ったときの挙動
 export function setupNotificationHandlers(): void {
   Notifications.setNotificationHandler({
+    // shouldShowAlert は非推奨になり、バナー表示 (画面上部に出る) と
+    // 一覧表示 (通知センターに残る) に分かれた。従来の shouldShowAlert:true は
+    // 両方に相当するので、どちらも true にして挙動を変えない。
     handleNotification: async () => ({
-      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
       shouldPlaySound: true,
       shouldSetBadge: true,
     }),
@@ -26,6 +30,20 @@ export function setupNotificationHandlers(): void {
   }
 }
 
+// 通知権限の応答から「許可されたか」だけを読む。
+//
+// なぜ直接 status を見ないか:
+//   expo-notifications の NotificationPermissionsStatus は
+//   expo-modules-core の PermissionResponse を継承しているが、
+//   expo-modules-core が node_modules/expo/ の下にネストされていて
+//   トップレベルから解決できない。そのため継承元のフィールド
+//   (status / granted など) が型として見えず、参照すると TS2339 になる。
+//   実行時には存在するので、unknown で受けてこの関数の中だけで形を決める。
+//   依存の配置が直れば、この関数は消して res.status をそのまま使える。
+function isPermissionGranted(res: unknown): boolean {
+  return (res as { status?: string } | null)?.status === 'granted';
+}
+
 // アプリ起動時: 通知権限取得 → Expo Push Token を Firestore に保存
 export async function registerForPushNotifications(userId: string): Promise<void> {
   try {
@@ -33,13 +51,11 @@ export async function registerForPushNotifications(userId: string): Promise<void
       console.warn('シミュレーターではプッシュ通知を登録できません');
       return;
     }
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+    let granted = isPermissionGranted(await Notifications.getPermissionsAsync());
+    if (!granted) {
+      granted = isPermissionGranted(await Notifications.requestPermissionsAsync());
     }
-    if (finalStatus !== 'granted') {
+    if (!granted) {
       console.warn('通知権限が許可されませんでした');
       return;
     }

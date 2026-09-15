@@ -1,5 +1,5 @@
 // 通知カード(v2: activity別絵文字 + 「済👌」状態)
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -65,10 +65,30 @@ export default function NotificationCard({ notification, onReact }: Props) {
   // 気分の有効期限が切れたカード。送信側は既に締めているので、
   // ここで「かー」を返しても相手には届かない。押せなくして減光する。
   // expiresAtMs を持たない旧データは期限の概念が無いので対象外。
+  //
+  // ★ 判定は描画時の Date.now() で行う。それだけだと、アラート画面を
+  //   開いたまま期限をまたいだ時に再描画が起きず、押しても届かない
+  //   「かー」ボタンが残り続ける。期限までの残り時間ぴったりに
+  //   タイマーを張り、そこで再描画させて「終了」に切り替える。
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const expiresAtMs = notification.expiresAtMs;
+  useEffect(() => {
+    if (isReaction || typeof expiresAtMs !== 'number') return;
+    const delay = expiresAtMs - Date.now();
+    // 既に過ぎているなら張る必要がない (この render で expired になる)。
+    if (delay <= 0) return;
+    // setTimeout の遅延は 32bit に丸められる (約24.8日) ため、それを超える
+    // 場合は張らない。mood の寿命は 3 時間なので実際には起こらないが、
+    // 丸めで即発火して無駄に再描画するのを防ぐ。
+    if (delay > 2 ** 31 - 1) return;
+    const t = setTimeout(() => setNowMs(Date.now()), delay);
+    return () => clearTimeout(t);
+  }, [isReaction, expiresAtMs]);
+
   const expired =
     !isReaction &&
-    typeof notification.expiresAtMs === 'number' &&
-    Date.now() >= notification.expiresAtMs;
+    typeof expiresAtMs === 'number' &&
+    nowMs >= expiresAtMs;
   const canReact = !reacted && !isReaction && !expired;
 
   const handlePress = async () => {

@@ -181,6 +181,15 @@ export function useNotifications(
           // 既に誰かが reacted。reaction 通知の重複生成を防ぐ。
           return;
         }
+        // 二重防御 2: 期限切れに「かー」を返さない。
+        // ボタン側でも押せなくしているが、押した瞬間に期限をまたぐ場合や
+        // 古い画面が残っている場合があるため、書き込む直前にも見る。
+        // 期限後は送信側が既に締めているので、返しても相手には届かない。
+        // expiresAt を持たない旧データは期限の概念が無いので素通しする。
+        const expiresAtMs = snap.data()?.expiresAt?.toMillis?.();
+        if (typeof expiresAtMs === 'number' && Date.now() >= expiresAtMs) {
+          return;
+        }
         await updateDoc(doc(db, 'notifications', notificationId), {
           reactedBy: currentUserId,
           isRead: true,
