@@ -9,27 +9,13 @@
 # ★ CFBundleShortVersionString は app.json の expo.version がそのまま使われる。
 #   公開済みのバージョンにはビルドを追加できない (トレインが閉じる) ため、
 #   App Store に出した後は必ず expo.version を上げてからビルドすること。
-build-request: 1.0.5 の初回ビルド
-requested-at: 2026-08-18T01:40:00Z
+build-request: 1.0.5 の修正ビルド（Build 91 想定）
+requested-at: 2026-09-15T23:35:00Z
 reason: |
-  直前の 1.0.4 でのビルドは altool で Apple に拒否された。
-
-    90186 Invalid Pre-Release Train.
-          The train version '1.0.4' is closed for new build submissions
-    90062 CFBundleShortVersionString [1.0.4] must contain a higher version
-          than that of the previously approved version [1.0.4]
-
-  1.0.4 (Build 88) を App Store に公開したことでトレインが閉じたため。
-  autoIncrement はビルド番号しか上げず、expo.version は据え置きだったので
-  同じ閉じたトレインに投げ続けていた。app.json の version を 1.0.5 に上げる。
-
-  含まれる変更 (6d4491f のマージ / 1.0.4 公開分からの差分):
-  - dfb77c5 アラートの文面で「どちらが誘ったか」を分かるようにする
-           「〜が「かー」してくれました」/「〜の気分に「かー」しました」
-  - 31fd8b1 バッジ判定から isRead を外し、未応答かつ期限内だけを数える。
-           ホーム画面に「届いています」のカードを追加し、その場で
-           「かー」を返せるようにした
-  - 73e599d アラート見出しのバッジを「新着」から「未対応」に
+  含まれる変更（f497abf / Build 90 からの差分）:
+  - 6b0dcf9 期限切れの気分に「かー」できる問題を修正
+           （カードを期限時刻に「終了」へ切り替え + 送信直前の期限チェック）
+           通知ハンドラを shouldShowBanner / shouldShowList に更新
 
   配信先は TestFlight まで。App Store 本審査への提出は行わない。
   Firestore のデータ構造・セキュリティルールは変更なし。
