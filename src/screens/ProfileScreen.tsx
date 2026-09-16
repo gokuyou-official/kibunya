@@ -19,6 +19,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useProfile } from '../hooks/useProfile';
 import { ACTIVITIES } from '../config/activities';
 import InterestSelectionScreen from './InterestSelectionScreen';
+import { deleteAccount, getSignInProvider } from '../utils/accountDeletion';
+import { formatAuthErrorAlert } from '../utils/firebaseError';
 
 export default function ProfileScreen() {
   const { currentUser, signOut } = useAuth();
@@ -29,6 +31,10 @@ export default function ProfileScreen() {
   const [bio, setBio] = useState('');
   const [saving, setSaving] = useState(false);
   const [showInterestModal, setShowInterestModal] = useState(false);
+
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setName(profile.name);
@@ -51,6 +57,75 @@ export default function ProfileScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // アカウント削除の実行本体。password 方式は事前にモーダルで入力させた
+  // パスワードを、Apple / unknown はそのまま渡す (Apple は端末側で
+  // Face ID 等の再認証UIが出る)。
+  const runDeleteAccount = async (password?: string) => {
+    if (!currentUser || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteAccount(currentUser, password);
+      // 成功: Firebase Auth ユーザーが消え、onAuthStateChanged 経由で
+      // currentUser が null になる。App.tsx の Root がそれを検知して
+      // 自動的にログイン/初期画面(OnboardingScreen)へ遷移するため、
+      // ここで明示的な画面遷移は不要。deleting は true のままにして
+      // unmount までの間、ボタン類を無効化しておく。
+    } catch (e: any) {
+      setDeleting(false);
+      setDeletePassword('');
+      const code = e?.code;
+      const msg = String(e?.message ?? '').toLowerCase();
+      const appleCanceled =
+        code === 'ERR_REQUEST_CANCELED' ||
+        code === 'ERR_CANCELED' ||
+        code === 'ERR_REQUEST_NOT_HANDLED' ||
+        msg.includes('cancel');
+      if (appleCanceled) return;
+
+      if (code === 'auth/requires-recent-login') {
+        Alert.alert(
+          '再ログインが必要です',
+          'セキュリティ保護のため、一度ログアウトしてから再度ログインし、もう一度「アカウントを削除」をお試しください。',
+          [
+            { text: 'あとで', style: 'cancel' },
+            { text: 'ログアウトする', style: 'destructive', onPress: () => signOut() },
+          ],
+        );
+        return;
+      }
+
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        Alert.alert('パスワードが正しくありません', 'もう一度お試しください');
+        setShowPasswordModal(true);
+        return;
+      }
+
+      Alert.alert('削除できませんでした', formatAuthErrorAlert(e));
+    }
+  };
+
+  const handleDeleteAccountPress = () => {
+    Alert.alert(
+      'アカウントを削除しますか？',
+      '削除するとすべてのデータが失われ、復元できません。',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: '削除する',
+          style: 'destructive',
+          onPress: () => {
+            const provider = getSignInProvider(currentUser);
+            if (provider === 'password') {
+              setShowPasswordModal(true);
+            } else {
+              runDeleteAccount();
+            }
+          },
+        },
+      ],
+    );
   };
 
   const interestLabels = profile.interests
@@ -154,6 +229,17 @@ export default function ProfileScreen() {
           >
             <Text style={styles.logoutText}>ログアウト</Text>
           </Pressable>
+
+          <Pressable
+            onPress={handleDeleteAccountPress}
+            disabled={deleting}
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+          >
+            <Text style={styles.deleteText}>アカウントを削除</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -167,6 +253,83 @@ export default function ProfileScreen() {
           editMode
           onDone={() => setShowInterestModal(false)}
         />
+      </Modal>
+
+      {/* メール/パスワードアカウント向け: 削除前の本人確認(再認証)モーダル */}
+      <Modal
+        visible={showPasswordModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deleting) setShowPasswordModal(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>本人確認</Text>
+            <Text style={styles.modalSub}>
+              セキュリティ保護のため、アカウント削除には現在のパスワードの入力が必要です
+            </Text>
+            <TextInput
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              placeholder="パスワード"
+              placeholderTextColor={colors.textLight}
+              secureTextEntry
+              autoFocus
+              editable={!deleting}
+              style={styles.input}
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => {
+                  setShowPasswordModal(false);
+                  setDeletePassword('');
+                }}
+                disabled={deleting}
+                style={({ pressed }) => [
+                  styles.modalCancelBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={styles.modalCancelText}>キャンセル</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  if (!deletePassword) {
+                    Alert.alert('パスワードを入力してください');
+                    return;
+                  }
+                  runDeleteAccount(deletePassword);
+                }}
+                disabled={deleting}
+                style={({ pressed }) => [
+                  styles.modalDeleteBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                {deleting ? (
+                  <ActivityIndicator color={colors.cream} />
+                ) : (
+                  <Text style={styles.modalDeleteText}>削除する</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* 削除処理中(Apple 再認証待ち含む)のブロッキング表示 */}
+      <Modal visible={deleting && !showPasswordModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.deletingCard}>
+            <ActivityIndicator color={colors.cream} />
+            <Text style={styles.deletingText}>アカウントを削除しています…</Text>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -260,5 +423,88 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     textDecorationLine: 'underline',
+  },
+  deleteBtn: {
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  deleteText: {
+    fontSize: 11,
+    color: colors.danger,
+    textDecorationLine: 'underline',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+  },
+  modalCard: {
+    width: '100%',
+    backgroundColor: colors.aiDeep,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 20,
+    gap: 12,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.cream,
+  },
+  modalSub: {
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  modalCancelText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalDeleteBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.shu,
+  },
+  modalDeleteText: {
+    color: colors.cream,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deletingCard: {
+    backgroundColor: colors.aiDeep,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
+    alignItems: 'center',
+    gap: 12,
+  },
+  deletingText: {
+    color: colors.cream,
+    fontSize: 13,
   },
 });

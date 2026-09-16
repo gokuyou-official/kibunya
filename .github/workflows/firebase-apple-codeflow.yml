@@ -1,0 +1,68 @@
+name: Firebase Set Apple codeFlowConfig
+
+# アカウント削除時の Apple トークン失効 (Guideline 5.1.1(v)) を有効化する。
+#
+# ⚠️ 秘密鍵は必ず repository secret APPLE_SIGNIN_P8_KEY から渡すこと。
+#    このリポジトリは public であり、workflow_dispatch の input は
+#    実行履歴に平文で残って誰でも閲覧できるため、鍵を input にしてはいけない。
+#
+# 必要な secrets:
+#   FIREBASE_SERVICE_ACCOUNT_KEY  (既存)
+#   APPLE_SIGNIN_P8_KEY           (新規: Sign in with Apple 用 .p8 の本文)
+on:
+  workflow_dispatch:
+    inputs:
+      team_id:
+        description: 'Apple Team ID'
+        required: true
+        default: 'HR8PFR4Y3W'
+        type: string
+      key_id:
+        description: 'Sign in with Apple の Key ID (.p8 に対応するもの)'
+        required: true
+        default: 'T73DJX4822'
+        type: string
+      dry_run:
+        description: '現状確認のみ (書き込まない)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  set-codeflow:
+    name: Register Apple codeFlowConfig
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          APPLE_SIGNIN_P8_KEY: ${{ secrets.APPLE_SIGNIN_P8_KEY }}
+        run: |
+          missing=0
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEY:-}" ]; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_KEY is not set"; missing=1
+          fi
+          if [ -z "${APPLE_SIGNIN_P8_KEY:-}" ]; then
+            echo "::error::Secret APPLE_SIGNIN_P8_KEY is not set. Sign in with Apple の .p8 本文を repository secret として登録してください"
+            missing=1
+          fi
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Register codeFlowConfig
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_PROJECT_ID: kibunyapjt
+          APPLE_TEAM_ID: ${{ inputs.team_id }}
+          APPLE_KEY_ID: ${{ inputs.key_id }}
+          APPLE_SIGNIN_P8_KEY: ${{ secrets.APPLE_SIGNIN_P8_KEY }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node scripts/firebase-set-apple-codeflow.mjs

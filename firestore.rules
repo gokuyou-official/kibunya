@@ -1,18 +1,106 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      allow get: if request.auth != null;
+      allow list: if false;
     }
+
     match /friends/{userId}/friendsList/{friendId} {
+      // リストの持ち主は自分のリストを自由に読み書きできる。
+      // active (通知トグル) を書けるのはここだけ。
       allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // 招待リンク経由の相互登録で、相手が自分のエントリを作成する。
+      // ★ キーを addedAt だけに限定する。制限が無いと、招待リンクを踏む側が
+      //   active: false を仕込んで「相手のリストで自分を最初からミュート」に
+      //   できてしまう (招待リンクは URL を知っていれば誰でも踏める)。
+      allow create: if request.auth != null && request.auth.uid == friendId
+        && request.resource.data.keys().hasOnly(['addedAt']);
+
+      // 既に登録済みの相手が招待リンクを踏み直した場合の再書き込み。
+      // create しか許可しないと、2 回目以降が update 扱いになって拒否される。
+      // 触れるのは addedAt のみ。active には絶対に触らせない。
+      // hasOnly は論理的に hasAny(['active']) を排除するが、将来 hasOnly の
+      // キーを増やした時に active が紛れ込む事故を防ぐため二重に書く。
+      allow update: if request.auth != null
+        && request.auth.uid == friendId
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['addedAt'])
+        && !request.resource.data.diff(resource.data)
+             .affectedKeys().hasAny(['active']);
+
+      // アカウント削除時、自分が「相手の友達リストに登録されている側」の
+      // ドキュメント (friends/{friendId}/friendsList/{自分のuid}) を
+      // 自分自身で削除できるようにする。
+      allow delete: if request.auth != null && request.auth.uid == friendId;
     }
+
+    // 「いきますかー」を送った後の状態。送信者本人の持ち物。
+    match /moods/{moodId} {
+      // 読めるのは送信者だけ。受信側はカードに必要な情報を
+      // notifications 側に持っているので、ここを読む必要がない。
+      allow read: if request.auth != null
+        && request.auth.uid == resource.data.senderId;
+
+      // ★ キーを固定する。recipientIds は「かー」を返せる人の判定に
+      //   使うので、後から差し替えられないよう update 対象から外す。
+      allow create: if request.auth != null
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+             'senderId', 'senderName', 'activity', 'area',
+             'recipientIds', 'createdAt', 'expiresAt', 'closedAt'
+           ]);
+
+      // 触れるのは closedAt だけ。期限 (expiresAt) や宛先を後から
+      // 書き換えられないようにする。
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.senderId
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['closedAt']);
+
+      allow delete: if request.auth != null
+        && request.auth.uid == resource.data.senderId;
+
+      // 「かー」。doc ID = 返した人の uid にして、1人1件を構造で保証する。
+      match /reactions/{userId} {
+        // 集計するのは送信者だけ。
+        allow read: if request.auth != null
+          && request.auth.uid ==
+             get(/databases/$(database)/documents/moods/$(moodId)).data.senderId;
+
+        // ★ create のみ。update / delete は許可しない
+        //   (「かー」の取り消しは仕様として存在しない)。
+        //   2回目以降は update 扱いになって拒否される。呼び出し側は
+        //   そのエラーを握り潰す (二重タップを無害にするため)。
+        //   宛先に入っていない人は返せない。moodId を知っていても弾く。
+        allow create: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['createdAt'])
+          && request.auth.uid in
+             get(/databases/$(database)/documents/moods/$(moodId)).data.recipientIds;
+      }
+    }
+
     match /notifications/{notificationId} {
-      allow read, write: if request.auth != null &&
+      allow read: if request.auth != null &&
         (request.auth.uid == resource.data.senderId ||
          request.auth.uid == resource.data.receiverId);
-      allow create: if request.auth != null;
+
+      allow create: if request.auth != null &&
+        request.resource.data.senderId == request.auth.uid;
+
+      allow update: if request.auth != null &&
+        request.auth.uid == resource.data.receiverId &&
+        request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(['isRead', 'reactedBy']);
+
+      // アカウント削除時は送信者側の履歴も自分で削除できる必要がある。
+      allow delete: if request.auth != null &&
+        (request.auth.uid == resource.data.senderId ||
+         request.auth.uid == resource.data.receiverId);
     }
   }
 }

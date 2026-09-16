@@ -1,0 +1,91 @@
+name: EAS Build iOS Production
+
+# 手動起動のみ。push トリガーは意図的に持たない。
+#
+# 以前は main への push で自動起動し、paths-ignore で .build-trigger /
+# ワークフロー定義 / scripts / *.md を除外していた。しかし src/ や App.tsx を
+# 変更する通常の push は当然すべて素通りするため、コードを直すたびに
+# クラウドビルドが走って EAS の月次枠を消費していた。
+# 実際 1.0.3 期には 4 本 (77-80) が走った上で Apple 側にトレイン閉鎖で
+# 破棄され成果ゼロ、1.0.4 期には 83/84 が意図せず TestFlight に並んだ。
+#
+# ビルドは .build-trigger 経由の eas-local-build.yml に一本化する
+# (macOS ランナー上の --local ビルドなので EAS build credit を消費しない)。
+# このワークフローはクラウド側が必要になった時の予備として手動起動で残す。
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: eas-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-submit:
+    name: Build & Submit iOS
+    runs-on: ubuntu-latest
+    env:
+      EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP: '1'
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check for EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is not set. Add it under Repo Settings → Secrets → Actions."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        # NOTE: cache: npm を意図的に指定しない。node_modules を毎回新規生成し、
+        # キャッシュ起因の stale build を防ぐ (EAS Build cache の補強)。
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build iOS production (no auto-submit)
+        # NOTE: --auto-submit を意図的に外し、ビルドと提出を分離する。
+        # ビルドステップの実時間 (本物のフルビルドなら数十分〜数時間) で
+        # 「fingerprint reuse による即時完了」を検知できるようにする。
+        run: eas build --platform ios --profile production --non-interactive --clear-cache
+
+      - name: Submit latest iOS build to App Store Connect
+        # 直前のステップで生成された最新ビルドを EAS から取得して submit。
+        # eas submit はネットワーク/Apple API の一過性エラーで失敗することが多いため
+        # 最大3回リトライ。各試行は 25 分でタイムアウト (全体予算 ~90 分以内)。
+        # バックオフは 60s → 180s (Apple API の rate limit を意識して長め)。
+        # NOTE: 'already submitted' は恒久エラーなのでリトライしても通らない。
+        # この場合は app.json の buildNumber を bump して再 push する必要がある。
+        timeout-minutes: 90
+        run: |
+          set -u
+          attempts=3
+          backoffs=(60 180)
+          for i in $(seq 1 $attempts); do
+            echo "::group::Submit attempt $i/$attempts"
+            if timeout 25m eas submit --platform ios --latest --non-interactive; then
+              echo "::endgroup::"
+              echo "Submit succeeded on attempt $i"
+              exit 0
+            fi
+            rc=$?
+            echo "::endgroup::"
+            echo "::warning::Submit attempt $i failed (exit code $rc)"
+            if [ $i -lt $attempts ]; then
+              sleep_sec=${backoffs[$((i-1))]}
+              echo "Sleeping ${sleep_sec}s before next attempt..."
+              sleep $sleep_sec
+            fi
+          done
+          echo "::error::All $attempts submit attempts failed"
+          exit 1

@@ -1,0 +1,70 @@
+name: Firebase Update Apple Provider Services ID
+
+# Apple Sign-In の Services ID (= clientId) を Firebase Apple Provider に
+# 設定するワークフロー。iOS ネイティブの Sign in with Apple は identity
+# token の aud が Bundle ID になるため、それと一致する値を Firebase 側に
+# 入れる必要がある。
+#
+# 必須 secret:
+#   FIREBASE_SERVICE_ACCOUNT_KEY  Service Account JSON 本文
+on:
+  workflow_dispatch:
+    inputs:
+      new_client_id:
+        description: 'Apple Provider に設定する clientId (= iOS Bundle ID)'
+        required: true
+        default: 'com.gokuyouofficial.kibunya'
+        type: string
+      dry_run:
+        description: 'Dry run (現状確認のみ)。false で実際に PATCH'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  update:
+    name: Update Apple provider clientId
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_KEY" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_KEY secret is not set"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run update script
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_PROJECT_ID: kibunyapjt
+          NEW_CLIENT_ID: ${{ inputs.new_client_id }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          {
+            echo "## Firebase Update Apple Provider"
+            echo ""
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo "- new_client_id: \`${NEW_CLIENT_ID}\`"
+            echo ""
+            echo '```'
+            node scripts/firebase-update-apple-provider.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

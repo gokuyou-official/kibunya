@@ -1,0 +1,70 @@
+name: ASC Configure (category + review info)
+
+# App Store Connect の以下 2 つを一括設定するワークフロー:
+#   - primaryCategory (App Info)
+#   - App Review Information (demoAccount / notes / required)
+#
+# 必須 secrets:
+#   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (現状と適用プラン表示のみ)。false で実適用'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  configure:
+    name: Configure ASC category & review info
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run asc-configure
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Configure"
+            echo ""
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-configure.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

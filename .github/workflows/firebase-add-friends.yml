@@ -1,0 +1,78 @@
+name: Firebase Add Friends (bidirectional)
+
+# Firestore 上で 2 ユーザーを双方向フレンド登録する手動ワークフロー。
+#
+# 必須 secret:
+#   FIREBASE_SERVICE_ACCOUNT_KEY  — Service Account JSON 本文
+#     取得: Firebase Console → プロジェクトの設定 → サービスアカウント
+#           → 新しい秘密鍵の生成 (DL した JSON を本文ごと貼り付け)
+#
+# 安全策: dry_run はデフォルト true。実適用は明示的に false で。
+on:
+  workflow_dispatch:
+    inputs:
+      user_a:
+        description: '1人目の email または uid (空なら users 一覧表示のみ)'
+        required: false
+        default: ''
+        type: string
+      user_b:
+        description: '2人目の email または uid (空なら users 一覧表示のみ)'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Dry run (計画のみ表示)。false で実際に書き込み。'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  add-friends:
+    name: Add bidirectional friend docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_KEY" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_KEY secret is not set"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run add-friends script
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_PROJECT_ID: kibunyapjt
+          USER_A: ${{ inputs.user_a }}
+          USER_B: ${{ inputs.user_b }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          {
+            echo "## Firebase Add Friends"
+            echo ""
+            echo "- dry_run: \`${DRY_RUN}\`"
+            echo "- user_a: \`${USER_A:-(unset)}\`"
+            echo "- user_b: \`${USER_B:-(unset)}\`"
+            echo ""
+            echo '```'
+            node scripts/firebase-add-friends.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

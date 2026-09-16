@@ -1,0 +1,184 @@
+name: Firestore Rules Deploy
+
+# firestore.rules を本番 (kibunyapjt) に反映する。
+#
+# ■ トリガー
+#   1. main への push で firestore.rules が変わった時 (自動反映)
+#      ★ branches を main に限定している。これを外すと feature ブランチへの
+#        push で本番ルールが書き換わる。絶対に消さないこと。
+#   2. workflow_dispatch (手動)。dry_run=true (既定) なら比較のみでデプロイしない。
+#
+# ■ 対象
+#   Firestore のセキュリティルールのみ。functions / hosting / indexes は含めない。
+#   Firebase Rules API (createRuleset + releases.patch) を直接使うため、
+#   構造的にルール以外へは到達しない。firebase-tools の deploy に
+#   戻すと --only の書き間違いで indexes まで巻き込めてしまうので戻さないこと。
+#
+# ■ 前後比較
+#   デプロイ前と後に配信中のルールを取得してログに出し、diff を表示する。
+#   デプロイ後はリポジトリの firestore.rules と一致することを検証し、
+#   一致しなければワークフローを失敗させる。
+#
+# 必須 secret: FIREBASE_SERVICE_ACCOUNT_KEY
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'firestore.rules'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true なら比較のみでデプロイしない'
+        type: boolean
+        default: true
+
+concurrency:
+  group: firestore-rules-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy firestore rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_PROJECT_ID: 'kibunyapjt'
+      # workflow_dispatch のときだけ入力を見る。push は常に本番反映 (dry_run=false)。
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEY:-}" ]; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_KEY is not set"
+            exit 1
+          fi
+          echo "event=${{ github.event_name }} dry_run=${DRY_RUN}"
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      # Firestore エミュレータは JVM 上で動く。ubuntu-latest の既定 JDK は
+      # firebase-tools の要求 (21 以上) を満たさず
+      # "firebase-tools no longer supports Java version before 21" で落ちるため、
+      # 明示的に 21 を入れる。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # ★ ルールの回帰テスト。ここが落ちたらデプロイステップまで到達しない
+      #   (後続に if: success() 相当の依存があるため)。
+      #   テストを通らないルールを本番に出さないための関門。
+      #   dry_run でも必ず実行する (壊れたルールを早期に検出するため)。
+      - name: Test firestore rules (emulator)
+        run: |
+          set -euo pipefail
+          cd test/rules
+          npm install --no-audit --no-fund
+          {
+            echo "## Rules tests"
+            echo ""
+            echo '```'
+            npx --yes firebase-tools@latest emulators:exec \
+              --only firestore --project demo-kibunya "node rules.test.mjs"
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch rules BEFORE
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          OUT_FILE: /tmp/before.rules
+        run: |
+          set -euo pipefail
+          {
+            echo "## BEFORE (配信中)"
+            echo ""
+            echo '```'
+            node scripts/firebase-get-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Diff (deployed vs repo)
+        run: |
+          set -uo pipefail
+          {
+            echo "## DIFF (左: 配信中 / 右: リポジトリ)"
+            echo ""
+            echo '```diff'
+            diff -u /tmp/before.rules firestore.rules || true
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if diff -q /tmp/before.rules firestore.rules >/dev/null; then
+            echo "NO_CHANGE=true" >> "$GITHUB_ENV"
+            echo "配信中のルールとリポジトリは既に一致している"
+          else
+            echo "NO_CHANGE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Stop here (dry run)
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: |
+          echo "dry_run=true のためデプロイしない。" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # ★ firebase-tools は使わない。
+      #   `firebase deploy --only firestore:rules` はデプロイ前に
+      #   serviceusage.googleapis.com へ「firestore API が有効か」を問い合わせる。
+      #   デプロイ用 SA に Service Usage の閲覧権限が無いため 403 で落ちる:
+      #     Permission denied to get service [firestore.googleapis.com]
+      #   ルール反映自体にその権限は不要なので、Firebase Rules API を
+      #   直接叩く (createRuleset + releases.patch)。触るのはルールだけで、
+      #   functions / hosting / indexes には構造的に到達しない。
+      - name: Deploy (firestore rules only, Rules REST API)
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          DRY_RUN: 'false'
+        run: |
+          set -euo pipefail
+          {
+            echo "## DEPLOY"
+            echo ""
+            echo '```'
+            node scripts/firebase-deploy-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch rules AFTER
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          OUT_FILE: /tmp/after.rules
+        run: |
+          set -euo pipefail
+          {
+            echo "## AFTER (配信中)"
+            echo ""
+            echo '```'
+            node scripts/firebase-get-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify deployed == repo
+        if: ${{ env.DRY_RUN != 'true' }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## BEFORE → AFTER"
+            echo ""
+            echo '```diff'
+            diff -u /tmp/before.rules /tmp/after.rules || true
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          if ! diff -q /tmp/after.rules firestore.rules >/dev/null; then
+            echo "::error::デプロイ後の配信ルールがリポジトリの firestore.rules と一致しない"
+            diff -u /tmp/after.rules firestore.rules || true
+            exit 1
+          fi
+          echo "✓ 配信中のルールがリポジトリと一致した"
