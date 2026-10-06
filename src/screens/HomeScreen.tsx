@@ -35,6 +35,7 @@ import { matchesInterest } from '../utils/interestMatch';
 import WaitingExpiredNotice from '../components/WaitingExpiredNotice';
 import MoodClosingCard from '../components/MoodClosingCard';
 import IncomingMoodCard from '../components/IncomingMoodCard';
+import RecipientPicker from '../components/RecipientPicker';
 import { useNotifications } from '../hooks/useNotifications';
 import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 
@@ -129,10 +130,10 @@ export default function HomeScreen({ navigation }: any) {
     [friends],
   );
 
-  // 実際に送る相手: active かつ「その気分に興味がある人」。
+  // 実際に送れる相手: active かつ「その気分に興味がある人」。
   // 以前は受信側でしか絞っていなかったため、興味の無い相手にも doc と push が
   // 飛んでいた。判定は受信側と同じ述語 (matchesInterest) を使う。
-  const recipients = useMemo(
+  const eligible = useMemo(
     () =>
       activeId
         ? activeFriends.filter((f) => matchesInterest(f.interests, activeId))
@@ -140,14 +141,50 @@ export default function HomeScreen({ navigation }: any) {
     [activeFriends, activeId],
   );
 
+  // 送る相手から外した人の id。
+  //
+  // ★ 「選んだ人」ではなく「外した人」を持つ。選んだ人を持つと、友達が
+  //   増えた時にその人が最初から外れた状態になる。外した人を持てば、
+  //   既定は常に「全員に送る」のままで済む。
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
+
+  // 選択は毎回リセットする。気分を送るのは毎回別の行動なので、
+  // 「前回タクを外したから今回も外れたまま」は事故になる。
+  // 気分タブを切り替えた時も、宛先の顔ぶれ自体が変わるのでリセットする。
+  useEffect(() => {
+    setExcludedIds(new Set());
+  }, [activeId]);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // 実際に送る相手。外された人を除いたもの。
+  const recipients = useMemo(
+    () => eligible.filter((f) => !excludedIds.has(f.id)),
+    [eligible, excludedIds],
+  );
+
+  const toggleRecipient = useCallback((id: string) => {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   const handleSend = useCallback(async () => {
     if (!currentUser || sending || !activeId) return;
     // 届く相手が1人もいないなら、doc も push も作らずに終わる。
     // 「送ったのに誰にも届いていない」状態 (待機だけ始まる) を作らないため。
-    if (recipients.length === 0) {
+    //
+    // ★ 判定は eligible (そもそも届けられる人) で行う。recipients で見ると、
+    //   自分で全員外した時にも「いま気分の合う友達がいません」が出てしまい、
+    //   事実と違う案内になる。全員外した場合はボタン側で押せなくしている。
+    if (eligible.length === 0) {
       setNoRecipients(true);
       return;
     }
+    if (recipients.length === 0) return;
     setSending(true);
     try {
       const myName = profile.name || 'フレンド';
@@ -203,13 +240,24 @@ export default function HomeScreen({ navigation }: any) {
       }
       // 待機状態は mood の購読 (useMyMood) が拾うので、ここでは立てない。
       setOverlay(true);
+      // 次の送信に前回の選択を持ち越さない。
+      setExcludedIds(new Set());
     } catch (e: any) {
       console.error('handleSend error', e);
       Alert.alert('送信失敗', 'もう一度お試しください');
     } finally {
       setSending(false);
     }
-  }, [currentUser, recipients, sending, activeId, profile.name, area, activity]);
+  }, [
+    currentUser,
+    eligible,
+    recipients,
+    sending,
+    activeId,
+    profile.name,
+    area,
+    activity,
+  ]);
 
   // ★ 「気分タブの再タップで待機を解除する」経路は廃止した。
   //   送信後の状態がローカル state だった頃は表示を戻すだけだったが、
@@ -346,11 +394,14 @@ export default function HomeScreen({ navigation }: any) {
                 onPressIn={pressIn}
                 onPressOut={pressOut}
                 onPress={handleSend}
-                disabled={sending}
+                // 届けられる人はいるのに自分で全員外した状態では押させない。
+                // ここで送ると宛先ゼロの mood ができてしまう。
+                disabled={sending || (eligible.length > 0 && recipients.length === 0)}
                 style={({ pressed }) => [
                   styles.cta,
                   pressed && { opacity: 0.95 },
                   sending && { opacity: 0.6 },
+                  eligible.length > 0 && recipients.length === 0 && { opacity: 0.5 },
                 ]}
               >
                 <Text style={styles.ctaText}>
@@ -365,6 +416,28 @@ export default function HomeScreen({ navigation }: any) {
               ? '気分は3時間でリセットされます'
               : '興味が合う友達に通知が届きます'}
           </Text>
+
+          {/*
+            宛先の人数と、個別に選ぶ導線。
+            これまで「実際に何人に届くか」はどこにも出ておらず、下のチップ列
+            (トグル ON の友達) と実際の宛先がずれていても分からなかった。
+            待機中は送る操作ができないので出さない。届けられる人が
+            1人もいない時も出さない (0人に送る導線は意味がない)。
+          */}
+          {!waiting && eligible.length > 0 ? (
+            <View style={styles.pickRow}>
+              <Text style={styles.pickCount}>
+                {recipients.length}人に届きます
+              </Text>
+              <Pressable
+                onPress={() => setPickerOpen(true)}
+                hitSlop={8}
+                style={({ pressed }) => pressed && { opacity: 0.6 }}
+              >
+                <Text style={styles.pickLink}>相手を選ぶ ＞</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {/*
             届いている気分。0 件のときは領域ごと出さない (余白も残さない)。
@@ -460,6 +533,20 @@ export default function HomeScreen({ navigation }: any) {
         visible={noRecipients}
         onFinish={() => setNoRecipients(false)}
         message="いま気分の合う友達がいません"
+      />
+
+      {/* 宛先を個別に選ぶ。渡すのは届けられる人だけ。 */}
+      <RecipientPicker
+        visible={pickerOpen}
+        friends={eligible.map((f) => ({
+          id: f.id,
+          name: f.name,
+          isOnline: f.isOnline,
+        }))}
+        selectedIds={recipients.map((f) => f.id)}
+        activityLabel={activity.label}
+        onToggle={toggleRecipient}
+        onClose={() => setPickerOpen(false)}
       />
     </SafeAreaView>
   );
@@ -603,6 +690,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textLight,
     marginTop: 4,
+  },
+  pickRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    paddingHorizontal: 4,
+  },
+  pickCount: {
+    fontSize: 13,
+    color: colors.cream,
+    fontWeight: '600',
+  },
+  pickLink: {
+    fontSize: 13,
+    color: colors.yamabuki,
+    fontWeight: '600',
   },
   pillRow: {
     width: '100%',
