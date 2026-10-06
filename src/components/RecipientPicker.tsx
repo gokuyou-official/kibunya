@@ -29,6 +29,8 @@ import { colors } from '../config/colors';
 export type PickableFriend = {
   id: string;
   name: string;
+  // プロフィールの「一言」。未入力なら空文字。
+  bio: string;
   isOnline: boolean;
 };
 
@@ -98,9 +100,17 @@ export default function RecipientPicker({
                     { backgroundColor: f.isOnline ? colors.online : colors.offline },
                   ]}
                 />
-                <Text style={styles.name} numberOfLines={1}>
-                  {f.name}
-                </Text>
+                {/* 名前と一言を積む。一言は長くても 1 行で省略する。 */}
+                <View style={styles.nameCol}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {f.name}
+                  </Text>
+                  {f.bio ? (
+                    <Text style={styles.bio} numberOfLines={1}>
+                      {f.bio}
+                    </Text>
+                  ) : null}
+                </View>
                 {f.isOnline ? (
                   <Text style={styles.onlineNote}>5分以内に開いています</Text>
                 ) : null}
@@ -177,7 +187,9 @@ const styles = StyleSheet.create({
   checkOff: { backgroundColor: 'transparent', borderColor: colors.cardBorder },
   checkMark: { fontSize: 13, fontWeight: '700', color: colors.ai },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  name: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.cream },
+  nameCol: { flex: 1 },
+  name: { fontSize: 15, fontWeight: '500', color: colors.cream },
+  bio: { marginTop: 2, fontSize: 11, color: colors.textMuted },
   onlineNote: { fontSize: 11, color: colors.textLight },
   footer: {
     paddingHorizontal: 20,

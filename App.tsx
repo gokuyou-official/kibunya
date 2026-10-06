@@ -46,6 +46,11 @@ import MatchOverlay from './src/components/MatchOverlay';
 
 const Tab = createBottomTabNavigator();
 
+// 在席 (lastSeen) を書き直す間隔。
+// 友達側のしきい値は 5 分 (useFriends の ONLINE_THRESHOLD_MS)。
+// それより短くしておかないと、開いているのに期限切れに見える瞬間ができる。
+const LAST_SEEN_INTERVAL_MS = 2 * 60 * 1000;
+
 // プッシュ通知タップから NavigationContainer の外でナビゲーションを呼ぶための ref
 export const navigationRef = createNavigationContainerRef();
 
@@ -329,6 +334,15 @@ function Root() {
     };
   }, [currentUser]);
 
+  // 在席 (lastSeen) の更新。
+  //
+  // 友達側はこの値を見て「5分以内に開いたか」で丸の色を決める。
+  // 起動時と前面復帰時に加え、開いている間も 2 分ごとに書く。
+  //
+  // ★ 背面では止める。iOS ではタイマー自体がほぼ止まるが、明示的に
+  //   止めておかないと復帰直後にまとめて発火する環境で無駄に書き込む。
+  //   止めても、前面に戻った瞬間に下の 'active' で 1 回書くので
+  //   「開いているのに灰色」にはならない。
   useEffect(() => {
     if (!currentUser) return;
     const updateLastSeen = () => {
@@ -338,14 +352,30 @@ function Root() {
         { merge: true },
       ).catch((e) => console.warn('lastSeen update error', e));
     };
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval) return;
+      interval = setInterval(updateLastSeen, LAST_SEEN_INTERVAL_MS);
+    };
+    const stop = () => {
+      if (!interval) return;
+      clearInterval(interval);
+      interval = null;
+    };
+
     updateLastSeen();
+    if (AppState.currentState === 'active') start();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') updateLastSeen();
+      if (state === 'active') {
+        updateLastSeen();
+        start();
+      } else {
+        stop();
+      }
     });
-    const interval = setInterval(updateLastSeen, 2 * 60 * 1000);
     return () => {
       sub.remove();
-      clearInterval(interval);
+      stop();
     };
   }, [currentUser]);
 
