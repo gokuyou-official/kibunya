@@ -53,9 +53,25 @@ export default function FriendsScreen() {
             {item.name.slice(0, 1)}
           </Text>
         </View>
-        <Text style={[styles.name, inactive && styles.textInactive]}>
-          {item.name}
-        </Text>
+        {/*
+          名前と「一言」を縦に積む。一言はプロフィールで入力できるのに
+          これまでどこにも出ておらず、書いても誰にも届かなかった。
+          長くても 1 行で省略する (行の高さを揃え、スイッチの位置を
+          ずらさないため)。未入力なら行ごと出さない。
+        */}
+        <View style={styles.nameCol}>
+          <Text style={[styles.name, inactive && styles.textInactive]}>
+            {item.name}
+          </Text>
+          {item.bio ? (
+            <Text
+              style={[styles.bio, inactive && styles.textInactive]}
+              numberOfLines={1}
+            >
+              {item.bio}
+            </Text>
+          ) : null}
+        </View>
         {/*
           ミュート中 (トグル OFF) は丸を出さない。
           OFF であること自体が行全体の減光で表現済みで、灰色の丸を重ねると
@@ -214,10 +230,18 @@ const styles = StyleSheet.create({
   textInactive: {
     color: colors.textMuted,
   },
-  name: {
+  // 名前と一言を積む列。flex はここが持つ (name 側からは外した)。
+  nameCol: {
     flex: 1,
+  },
+  name: {
     fontSize: 14,
     color: colors.cream,
+  },
+  bio: {
+    marginTop: 2,
+    fontSize: 11,
+    color: colors.textMuted,
   },
   dot: {
     width: 10,

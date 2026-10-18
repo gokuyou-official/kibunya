@@ -44,7 +44,7 @@ import { useMyMood, formatRemaining, MOOD_TTL_MS } from '../hooks/useMyMood';
 
 export default function HomeScreen({ navigation }: any) {
   const { currentUser } = useAuth();
-  const { profile } = useProfile(currentUser?.uid);
+  const { profile, loading: profileLoading } = useProfile(currentUser?.uid);
   const { friends } = useFriends(currentUser?.uid);
 
   // 表示対象: ユーザーの interests と enabled の積集合
@@ -68,6 +68,22 @@ export default function HomeScreen({ navigation }: any) {
   const [overlay, setOverlay] = useState(false);
   const [sending, setSending] = useState(false);
   const [area, setArea] = useState('');
+  // プロフィールの「主な活動エリア」を初期値に入れる。
+  //
+  // これまで profile.area は保存されるだけで、どこにも読み出されて
+  // いなかった。ホーム画面のエリア欄は毎回空から始まるため、登録した
+  // 人でも送るたびに打ち直す必要があった。
+  //
+  // ★ 入れるのは 1 回だけ。profile は購読なので、入力中に他の端末で
+  //   プロフィールが変わると上書きしてしまう。空にした人の意図も残す。
+  const areaSeededRef = useRef(false);
+  useEffect(() => {
+    if (areaSeededRef.current) return;
+    // 読み込み前は profile.area が '' なので、確定してから入れる。
+    if (profileLoading) return;
+    areaSeededRef.current = true;
+    if (profile.area) setArea(profile.area);
+  }, [profileLoading, profile.area]);
   // 届く相手が0人だった時の一言を出している間 true。
   // 送信自体を行わないので mood とは無関係。
   const [noRecipients, setNoRecipients] = useState(false);
@@ -481,6 +497,17 @@ export default function HomeScreen({ navigation }: any) {
               )}
             </ScrollView>
           </View>
+
+          {/*
+            丸の意味。フレンドタブには同じ説明があるが、ホームには無く、
+            トグルの ON/OFF を表していると誤解されやすかった。
+            友達が 1 人もいない時は丸自体が出ないので添えない。
+          */}
+          {activeFriends.length > 0 ? (
+            <Text style={styles.dotLegend}>
+              緑の丸は、5分以内にアプリを開いた友達です
+            </Text>
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -541,6 +568,7 @@ export default function HomeScreen({ navigation }: any) {
         friends={eligible.map((f) => ({
           id: f.id,
           name: f.name,
+          bio: f.bio,
           isOnline: f.isOnline,
         }))}
         selectedIds={recipients.map((f) => f.id)}
@@ -712,6 +740,13 @@ const styles = StyleSheet.create({
   pillRow: {
     width: '100%',
     marginTop: 18,
+  },
+  dotLegend: {
+    width: '100%',
+    marginTop: 8,
+    paddingHorizontal: 4,
+    fontSize: 11,
+    color: colors.textLight,
   },
   noFriends: {
     fontSize: 12,
