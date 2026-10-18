@@ -1,0 +1,71 @@
+name: ASC Submit for Review
+
+# App Store Connect の clean-slate 提出ワークフロー:
+#   1. 既存 reviewSubmissions を全 DELETE
+#   2. 最新 VALID ビルドを target version に紐付け
+#   3. legacy POST /appStoreVersionSubmissions → 失敗時は
+#      reviewSubmissions フロー (create + add item + submit) にフォールバック
+#
+# dry_run の概念は廃止。Run workflow を押した時点で常に実行。
+#
+# 必須 secrets:
+#   ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      version_id:
+        description: '対象 appStoreVersion ID (空で既定値を使用)'
+        required: false
+        default: '0a4eb599-86f1-4517-a2c4-8ed22281c5ef'
+        type: string
+
+jobs:
+  submit:
+    name: Attach build + submit for review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run asc-submit
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          ASC_VERSION_ID: ${{ inputs.version_id }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Submit for Review"
+            echo ""
+            echo "- version_id: \`${ASC_VERSION_ID:-(default)}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-submit.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

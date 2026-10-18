@@ -1,0 +1,96 @@
+name: ASC Prepare Version (release notes / build link)
+
+# 審査提出の準備。リリースノート (whatsNew) の入力と build の紐付けを行う。
+# 審査提出そのものは行わない。
+#
+# 既定は dry_run=true。実書き込みには dry_run=false が必要。
+# リリースノートの本文は scripts/data/*.txt をそのまま送る
+# (input やシェル経由だと改行・記号が壊れうるため)。
+#
+# 必須 secrets: ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      version_string:
+        description: '対象バージョン'
+        required: true
+        default: '1.0.4'
+        type: string
+      expect_version_id:
+        description: '対象バージョンの ID (取り違え防止。不一致なら中断)'
+        required: false
+        default: ''
+        type: string
+      whatsnew_file:
+        description: 'リリースノート本文のファイルパス。空ならスキップ'
+        required: false
+        default: 'scripts/data/whatsnew-1.0.4-ja.txt'
+        type: string
+      locale:
+        description: 'リリースノートを入れるロケール'
+        required: true
+        default: 'ja'
+        type: string
+      build_number:
+        description: '紐付ける build 番号。空ならスキップ'
+        required: false
+        default: '85'
+        type: string
+      dry_run:
+        description: 'true なら確認のみで書き込まない'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  prepare:
+    name: Set release notes and link build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"; missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Prepare version
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+          EXPECT_VERSION_ID: ${{ inputs.expect_version_id }}
+          LOCALE: ${{ inputs.locale }}
+          WHATSNEW_FILE: ${{ inputs.whatsnew_file }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Prepare Version"
+            echo ""
+            echo "- version: \`${TARGET_VERSION_STRING}\` / build: \`${BUILD_NUMBER}\` / dry_run: \`${DRY_RUN}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-prepare-version.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

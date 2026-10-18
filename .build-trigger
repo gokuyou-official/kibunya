@@ -1,0 +1,21 @@
+# eas-local-build.yml 起動用マーカーファイル。
+# このファイルを変更して main に push すると、macOS ローカルビルド +
+# TestFlight 提出 (profile=production, auto_submit=true) が起動する。
+# クラウドビルド (eas-build.yml) は workflow_dispatch 専用なので起動しない。
+#
+# ビルド番号は eas.json の appVersionSource: "remote" + autoIncrement: true
+# により EAS サーバー側が採番する。app.json の ios.buildNumber は参照されない。
+#
+# ★ CFBundleShortVersionString は app.json の expo.version がそのまま使われる。
+#   公開済みのバージョンにはビルドを追加できない (トレインが閉じる) ため、
+#   App Store に出した後は必ず expo.version を上げてからビルドすること。
+build-request: 1.0.5 の修正ビルド（Build 91 想定）
+requested-at: 2026-09-15T23:35:00Z
+reason: |
+  含まれる変更（f497abf / Build 90 からの差分）:
+  - 6b0dcf9 期限切れの気分に「かー」できる問題を修正
+           （カードを期限時刻に「終了」へ切り替え + 送信直前の期限チェック）
+           通知ハンドラを shouldShowBanner / shouldShowList に更新
+
+  配信先は TestFlight まで。App Store 本審査への提出は行わない。
+  Firestore のデータ構造・セキュリティルールは変更なし。

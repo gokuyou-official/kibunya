@@ -1,0 +1,49 @@
+name: ASC TestFlight Forensics (read only)
+
+# TestFlight の配布状況 (Beta Group / 公開リンク / Beta App Review) を調べる。
+# ★ 読み取り専用。グループ作成や公開リンクの有効化は行わない。
+on:
+  workflow_dispatch:
+
+jobs:
+  status:
+    name: Deep-dive TestFlight join path
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Run TestFlight status script
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+        run: |
+          set -o pipefail
+          {
+            echo "## TestFlight Forensics"
+            echo ""
+            echo '```'
+            node scripts/asc-testflight-forensics.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
