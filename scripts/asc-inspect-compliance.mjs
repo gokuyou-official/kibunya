@@ -104,6 +104,23 @@ async function main() {
     console.log(`  appAvailabilityV2 id=${availId}`);
     console.log(`  availableInNewTerritories = ${JSON.stringify(a.availableInNewTerritories)}`);
 
+    // ★ territoryAvailabilities は v2 配下にある。共通クライアントは
+    //   ベース URL を /v1 で固定しているため、ここだけ生の fetch で叩く。
+    //   (/v1/... に対しては 404 NOT_FOUND が返る)
+    const V2 = 'https://api.appstoreconnect.apple.com/v2';
+    async function getV2(path, params) {
+      const url = new URL(V2 + path);
+      for (const [k, v] of Object.entries(params ?? {})) {
+        if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+      }
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${asc.token}`, Accept: 'application/json' },
+      });
+      const text = await res.text();
+      if (!res.ok) return { ok: false, status: res.status, detail: text.slice(0, 300) };
+      return { ok: true, data: text ? JSON.parse(text) : null };
+    }
+
     // ★ limit の上限は 50。それ以上を渡すと 400 になるので cursor で回す。
     let cursor;
     let page = 0;
@@ -112,9 +129,9 @@ async function main() {
     const euList = [];
     const unavailableEu = [];
     for (;;) {
-      const q = { limit: 50, include: 'territory' };
+      const q = { limit: 50 };
       if (cursor) q.cursor = cursor;
-      const r = await probe(`/appAvailabilitiesV2/${availId}/territoryAvailabilities`, q);
+      const r = await getV2(`/appAvailabilities/${availId}/territoryAvailabilities`, q);
       if (!r.ok) {
         console.log(`  ページ取得に失敗: ${r.status} ${r.detail}`);
         break;
