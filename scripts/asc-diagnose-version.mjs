@@ -231,9 +231,20 @@ async function main() {
       // ただし以下は null が正常値なので提出ブロックとして扱わない:
       //   kidsAgeBand              … キッズカテゴリのアプリのみ設定する
       //   developerAgeRatingInfoUrl… 任意の補足情報 URL
+      //   gracRatingClassificationNumber
+      //                            … 韓国 GRAC の等級分類番号。GRAC の
+      //                              等級を実際に取得したアプリだけが持つ。
+      //                              koreaAgeRatingOverride が "NONE" の
+      //                              ゲームでないアプリは null が正常。
+      //                              実際、公開中の 1.0.4 (READY_FOR_SALE) も
+      //                              この値は null のまま審査を通っている。
       // これらを blocker として数えると「埋めなければ出せない」と
       // 誤解させてしまう。
-      const OPTIONAL_NULL_OK = ['kidsAgeBand', 'developerAgeRatingInfoUrl'];
+      const OPTIONAL_NULL_OK = [
+        'kidsAgeBand',
+        'developerAgeRatingInfoUrl',
+        'gracRatingClassificationNumber',
+      ];
       const unanswered = Object.entries(aa)
         .filter(([, v]) => v === null || v === undefined)
         .map(([k]) => k);

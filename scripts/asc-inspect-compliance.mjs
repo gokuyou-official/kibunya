@@ -95,34 +95,60 @@ async function main() {
 
   // ---------------------------------------------------- 2. 配信先の地域
   header('2. 配信先の地域 (EU を外す案の検討材料)');
-  const avail = await probe(`/apps/${APP_ID}/appAvailabilityV2`, {
-    include: 'territoryAvailabilities',
-    'limit[territoryAvailabilities]': 200,
-  });
-  if (!avail.ok) {
-    console.log(`  取得できず: ${avail.status} ${avail.detail}`);
+  const availHead = await probe(`/apps/${APP_ID}/appAvailabilityV2`);
+  if (!availHead.ok) {
+    console.log(`  取得できず: ${availHead.status} ${availHead.detail}`);
   } else {
-    const a = avail.data?.data?.attributes ?? {};
+    const availId = availHead.data?.data?.id;
+    const a = availHead.data?.data?.attributes ?? {};
+    console.log(`  appAvailabilityV2 id=${availId}`);
     console.log(`  availableInNewTerritories = ${JSON.stringify(a.availableInNewTerritories)}`);
-    const inc = avail.data?.included ?? [];
-    const tas = inc.filter((x) => x.type === 'territoryAvailabilities');
-    console.log(`  territoryAvailabilities = ${tas.length}件`);
+
+    // ★ limit の上限は 50。それ以上を渡すと 400 になるので cursor で回す。
+    let cursor;
+    let page = 0;
+    let total = 0;
     let available = 0;
-    let euAvailable = 0;
     const euList = [];
-    for (const t of tas) {
-      const ta = t.attributes ?? {};
-      const code = t.relationships?.territory?.data?.id ?? '???';
-      if (ta.available) {
-        available++;
-        if (EU.has(code)) {
-          euAvailable++;
-          euList.push(code);
+    const unavailableEu = [];
+    for (;;) {
+      const q = { limit: 50, include: 'territory' };
+      if (cursor) q.cursor = cursor;
+      const r = await probe(`/appAvailabilitiesV2/${availId}/territoryAvailabilities`, q);
+      if (!r.ok) {
+        console.log(`  ページ取得に失敗: ${r.status} ${r.detail}`);
+        break;
+      }
+      const rows = r.data?.data ?? [];
+      for (const t of rows) {
+        total++;
+        const code = t.relationships?.territory?.data?.id ?? '???';
+        if (t.attributes?.available) {
+          available++;
+          if (EU.has(code)) euList.push(code);
+        } else if (EU.has(code)) {
+          unavailableEu.push(code);
         }
       }
+      page++;
+      // links.next があれば cursor を取り出して続ける。
+      const next = r.data?.links?.next;
+      if (!next || rows.length === 0) break;
+      try {
+        cursor = new URL(next).searchParams.get('cursor') ?? undefined;
+      } catch {
+        cursor = undefined;
+      }
+      if (!cursor) break;
+      if (page > 20) break; // 保険
     }
-    console.log(`  配信中 = ${available}カ国 (うち EU = ${euAvailable}カ国)`);
-    if (euList.length) console.log(`  EU の内訳: ${euList.sort().join(', ')}`);
+    console.log(`  territoryAvailabilities = ${total}件 (${page}ページ)`);
+    console.log(`  配信中 = ${available}カ国`);
+    console.log(`  うち EU 27カ国のうち配信中 = ${euList.length}カ国`);
+    if (euList.length) console.log(`    配信中の EU: ${euList.sort().join(', ')}`);
+    if (unavailableEu.length) {
+      console.log(`    配信していない EU: ${unavailableEu.sort().join(', ')}`);
+    }
   }
 
   // -------------------------------------------------- 3. 年齢レーティング
