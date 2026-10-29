@@ -24,4 +24,7 @@ export const colors = {
   // 状態色
   online: '#3BB273',
   offline: 'rgba(255,249,236,0.25)',
+
+  // 破壊的操作(アカウント削除など)の控えめな警告色
+  danger: 'rgba(217,72,41,0.85)',
 };

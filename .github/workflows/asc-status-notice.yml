@@ -1,0 +1,35 @@
+name: ASC Status Notice (read only)
+
+# 審査状況を読み取り、結果を GitHub の注記（annotation）として残す。
+# ログを開かなくても、API から状態だけを読めるようにするための読み取り専用ワークフロー。
+on:
+  workflow_dispatch:
+    inputs:
+      version_string:
+        description: '確認するバージョン'
+        required: true
+        default: '1.0.5'
+        type: string
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Read status
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+        run: |
+          node scripts/asc-diagnose-version.mjs > out.txt 2>&1 || true
+          grep -E "versionString=|state=|reviewSubmission|★|エラー" out.txt | head -20 | while IFS= read -r line; do
+            echo "::notice::$line"
+          done

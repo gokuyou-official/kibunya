@@ -9,6 +9,7 @@ import {
   Share,
   Alert,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
@@ -18,7 +19,18 @@ import { generateInviteLink } from '../utils/inviteLink';
 
 export default function FriendsScreen() {
   const { currentUser, signOut } = useAuth();
-  const { friends, loading } = useFriends(currentUser?.uid);
+  const { friends, loading, setFriendActive } = useFriends(currentUser?.uid);
+
+  const handleToggle = useCallback(
+    async (friendId: string, nextActive: boolean) => {
+      try {
+        await setFriendActive(friendId, nextActive);
+      } catch (e: any) {
+        Alert.alert('更新できませんでした', e?.message ?? '');
+      }
+    },
+    [setFriendActive],
+  );
 
   const handleInvite = useCallback(async () => {
     if (!currentUser) return;
@@ -32,20 +44,65 @@ export default function FriendsScreen() {
     }
   }, [currentUser]);
 
-  const renderItem = ({ item }: { item: Friend }) => (
-    <View style={styles.row}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{item.name.slice(0, 1)}</Text>
+  const renderItem = ({ item }: { item: Friend }) => {
+    const inactive = !item.active;
+    return (
+      <View style={[styles.row, inactive && styles.rowInactive]}>
+        <View style={[styles.avatar, inactive && styles.avatarInactive]}>
+          <Text style={[styles.avatarText, inactive && styles.textInactive]}>
+            {item.name.slice(0, 1)}
+          </Text>
+        </View>
+        {/*
+          名前と「一言」を縦に積む。一言はプロフィールで入力できるのに
+          これまでどこにも出ておらず、書いても誰にも届かなかった。
+          長くても 1 行で省略する (行の高さを揃え、スイッチの位置を
+          ずらさないため)。未入力なら行ごと出さない。
+        */}
+        <View style={styles.nameCol}>
+          <Text style={[styles.name, inactive && styles.textInactive]}>
+            {item.name}
+          </Text>
+          {item.bio ? (
+            <Text
+              style={[styles.bio, inactive && styles.textInactive]}
+              numberOfLines={1}
+            >
+              {item.bio}
+            </Text>
+          ) : null}
+        </View>
+        {/*
+          ミュート中 (トグル OFF) は丸を出さない。
+          OFF であること自体が行全体の減光で表現済みで、灰色の丸を重ねると
+          「オフラインだから灰色」なのか「ミュートだから灰色」なのかが
+          区別できなくなる。ON の相手だけ在席を示す。
+        */}
+        {item.active ? (
+          <View
+            style={[
+              styles.dot,
+              { backgroundColor: item.isOnline ? colors.online : colors.offline },
+            ]}
+          />
+        ) : (
+          // 丸の分の幅は空けておく。行ごとにスイッチの位置がずれないように。
+          <View style={styles.dotPlaceholder} />
+        )}
+        <Switch
+          value={item.active}
+          onValueChange={(v) => handleToggle(item.id, v)}
+          // ON: ブランドのゴールド (yamabuki)。ブランド統一感を保ちつつ、
+          //     online dot の緑との視覚衝突も避けられる。
+          // OFF: cardBorder (半透明クリーム)。背景に馴染ませる。
+          // thumb は両 OS とも明るめ (cream) で常に視認できるように。
+          trackColor={{ false: colors.cardBorder, true: colors.yamabuki }}
+          thumbColor={colors.cream}
+          ios_backgroundColor={colors.cardBorder}
+        />
       </View>
-      <Text style={styles.name}>{item.name}</Text>
-      <View
-        style={[
-          styles.dot,
-          { backgroundColor: item.isOnline ? colors.online : colors.offline },
-        ]}
-      />
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -61,6 +118,9 @@ export default function FriendsScreen() {
           <Text style={styles.inviteText}>招待する</Text>
         </Pressable>
       </View>
+
+      <Text style={styles.hint}>オンの友達に気分が届きます</Text>
+      <Text style={styles.hintSub}>緑の丸は、5分以内にアプリを開いた友達です</Text>
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.shu} />
@@ -121,6 +181,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  hint: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+  },
+  hintSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+    paddingTop: 2,
+    paddingBottom: 10,
+  },
   list: {
     paddingHorizontal: 16,
     paddingBottom: 24,
@@ -137,6 +209,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 12,
   },
+  rowInactive: {
+    opacity: 0.5,
+  },
   avatar: {
     width: 36,
     height: 36,
@@ -145,19 +220,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  avatarInactive: {
+    backgroundColor: colors.cardBorder,
+  },
   avatarText: {
     color: colors.ai,
     fontWeight: '700',
   },
-  name: {
+  textInactive: {
+    color: colors.textMuted,
+  },
+  // 名前と一言を積む列。flex はここが持つ (name 側からは外した)。
+  nameCol: {
     flex: 1,
+  },
+  name: {
     fontSize: 14,
     color: colors.cream,
+  },
+  bio: {
+    marginTop: 2,
+    fontSize: 11,
+    color: colors.textMuted,
   },
   dot: {
     width: 10,
     height: 10,
     borderRadius: 5,
+  },
+  // 丸を出さない行でも幅を保ち、スイッチの位置を揃える
+  dotPlaceholder: {
+    width: 10,
+    height: 10,
   },
   empty: {
     flex: 1,
