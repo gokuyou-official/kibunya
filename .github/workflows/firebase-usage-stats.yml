@@ -1,0 +1,20 @@
+name: Firebase Usage Stats (read only)
+
+# KIBUNYA の利用状況を件数だけ集計する。読み取り専用・個人情報は出力しない。
+on:
+  workflow_dispatch:
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Stats
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: node scripts/firebase-usage-stats.mjs | tee -a "$GITHUB_STEP_SUMMARY"
