@@ -1,8 +1,19 @@
 name: Firebase Usage Stats (read only)
 
-# KIBUNYA の利用状況を件数だけ集計する。読み取り専用・個人情報は出力しない。
+# KIBUNYA の利用状況を件数だけ集計する。Firebase は読み取り専用・個人情報は出力しない。
+# 結果（件数のみ）を ops-stats/usage.md に保存し、毎日のPDCAから読めるようにする。
 on:
+  schedule:
+    - cron: '31 22 * * *'   # 毎日 JST 7:31（朝のPDCAの前）
+    - cron: '31 10 * * *'   # 毎日 JST 19:31（夜のPDCAの前）
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: usage-stats
+  cancel-in-progress: false
 
 jobs:
   stats:
@@ -17,4 +28,16 @@ jobs:
       - name: Stats
         env:
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
-        run: node scripts/firebase-usage-stats.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -o pipefail
+          node scripts/firebase-usage-stats.mjs | grep -v '^::notice::' > out.txt
+          cat out.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r l; do echo "::notice::$l"; done < out.txt
+          mkdir -p ops-stats
+          { echo "# KIBUNYA 利用状況（件数のみ・自動更新）"; echo; echo "更新: $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"; echo; sed 's/^/- /' out.txt; } > ops-stats/usage.md
+      - name: Save
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops-stats/usage.md
+          git diff --cached --quiet || git commit -m "利用状況の件数を更新（自動）" && git push
