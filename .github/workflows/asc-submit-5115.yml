@@ -1,0 +1,117 @@
+name: ASC Submit (Guideline 5.1.1(v))
+
+# アカウント削除機能入りビルドを App Store 審査に提出するワークフロー。
+#
+# 既存 asc-submit.yml との違い:
+#   - 対象バージョンを ID 固定ではなく versionString (既定 1.0.3) で解決
+#   - 紐付けるビルド番号を明示指定できる
+#   - appStoreReviewDetails.notes に 5.1.1(v) の説明を追記する
+#
+# 必須 secrets: ASC_ISSUER_ID / ASC_KEY_ID / ASC_P8_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      version_string:
+        description: '対象バージョン (App Store 上の表示バージョン)'
+        required: true
+        default: '1.0.3'
+        type: string
+      build_number:
+        description: '紐付けるビルド番号 (空なら最新の VALID ビルド)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: asc-submit-5115
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Attach build + review notes + submit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify readiness (read-only)
+        # 年齢レーティングは App Store Connect の UI で回答・確定済みのため
+        # ここでは絶対に上書きしない。DRY_RUN=true にし、かつ
+        # AGE_* env を渡さないことで二重に書き込みを防ぐ
+        # (スクリプトは AGE_* が明示的に渡された時だけ PATCH する実装)。
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+          DRY_RUN: 'true'
+        run: |
+          set -o pipefail
+          {
+            echo '```'
+            node scripts/asc-fix-readiness.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run submission script
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -o pipefail
+          {
+            echo "## ASC Submit (Guideline 5.1.1(v))"
+            echo ""
+            echo "- version: \`${TARGET_VERSION_STRING}\`"
+            echo "- build:   \`${BUILD_NUMBER:-(latest VALID)}\`"
+            echo ""
+            echo '```'
+            node scripts/asc-submit-5115.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Diagnose on failure
+        if: failure()
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          TARGET_VERSION_STRING: ${{ inputs.version_string }}
+        run: |
+          set -o pipefail
+          {
+            echo '## 失敗時の状態ダンプ'
+            echo '```'
+            node scripts/asc-diagnose-version.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

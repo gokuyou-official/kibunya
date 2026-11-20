@@ -1,0 +1,45 @@
+name: Firebase Rules Check (read only)
+
+# 本番で配信中の Firestore セキュリティルールを取得して全文を出力する。
+#
+# ★ 読み取り専用。ルールのデプロイ・変更は一切行わない。
+#   デプロイは別ワークフローの責務として分離する。
+#
+# 必須 secret: FIREBASE_SERVICE_ACCOUNT_KEY
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Fetch deployed firestore rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEY:-}" ]; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_KEY is not set"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Fetch deployed rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_PROJECT_ID: 'kibunyapjt'
+        run: |
+          set -o pipefail
+          {
+            echo "## Deployed Firestore Rules"
+            echo ""
+            echo '```'
+            node scripts/firebase-get-rules.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

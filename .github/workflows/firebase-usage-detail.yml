@@ -1,0 +1,20 @@
+name: Firebase Usage Detail (read only)
+
+# 登録アカウントの使われ方を件数だけで集計する。読み取り専用・個人情報は出力しない。
+on:
+  workflow_dispatch:
+
+jobs:
+  detail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Detail
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: node scripts/firebase-usage-detail.mjs | grep -v '^::notice::' | tee -a "$GITHUB_STEP_SUMMARY"; node scripts/firebase-usage-detail.mjs | grep '^::'

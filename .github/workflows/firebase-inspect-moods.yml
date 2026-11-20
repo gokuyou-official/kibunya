@@ -1,0 +1,46 @@
+name: Firebase Inspect Moods (read only)
+
+# 招待リンクの uid を Firestore 上で逆引きする。
+# ★ 読み取り専用。個人情報は伏字で出力する (public リポジトリのため)。
+on:
+  workflow_dispatch:
+    inputs:
+      sender_uid:
+        description: '絞り込む senderId (空なら全件)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  inspect:
+    name: Inspect moods
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEY:-}" ]; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_KEY is not set"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+
+      - name: Inspect
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          SENDER_UID: ${{ inputs.sender_uid }}
+        run: |
+          set -o pipefail
+          {
+            echo "## Moods inspection"
+            echo ""
+            echo '```'
+            node scripts/firebase-inspect-moods.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
