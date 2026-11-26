@@ -1,0 +1,55 @@
+name: Firebase Auth Diagnose
+
+# 新規ユーザー Email signup が Firebase 側で通るかどうかを REST API で確認、
+# 同時にプロジェクトの sign-in 設定 (公開取得可能な範囲) も列挙する。
+# ビルド不要、ASC とは無関係。
+#
+# Web API Key は public なので Secret 不要 (firebase.ts と同じ値を script に
+# 埋め込んでいる)。FIREBASE_API_KEY を Secrets に登録すれば上書き可能。
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Firebase Auth diagnose
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm install しない (両スクリプトとも標準ライブラリのみ使用)。
+
+      - name: Step 1 - Project config inspection
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: kibunyapjt
+        run: |
+          set -o pipefail
+          {
+            echo "## Step 1: Project config (public REST)"
+            echo ""
+            echo '```'
+            node scripts/firebase-diagnose-config.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Step 2 - New user signUp attempt
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: kibunyapjt
+        run: |
+          set -o pipefail
+          {
+            echo ""
+            echo "## Step 2: New user signUp via REST"
+            echo ""
+            echo '```'
+            node scripts/firebase-diagnose-signup.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

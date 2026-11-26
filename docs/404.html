@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>招待リンク | KIBUNYA</title>
+  <style>
+    :root {
+      --ai: #1A2E55;
+      --yamabuki: #F5C518;
+      --shu: #E8391F;
+      --white: #f9f5ee;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--ai);
+      color: var(--white);
+      font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .emoji {
+      font-size: 84px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--yamabuki);
+      margin-bottom: 8px;
+      letter-spacing: 0.08em;
+    }
+    .sub {
+      font-size: 14px;
+      opacity: 0.7;
+      line-height: 1.7;
+      margin-bottom: 36px;
+      max-width: 320px;
+    }
+    .status {
+      font-size: 13px;
+      opacity: 0.55;
+      margin-bottom: 28px;
+      min-height: 1.2em;
+    }
+    .btn {
+      display: inline-block;
+      background: var(--shu);
+      color: var(--white);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 16px;
+      margin-bottom: 12px;
+      min-width: 240px;
+    }
+    .note {
+      font-size: 12px;
+      opacity: 0.5;
+      max-width: 320px;
+      line-height: 1.6;
+      margin-top: 8px;
+    }
+    a { color: var(--yamabuki); text-decoration: none; }
+    footer {
+      position: fixed;
+      bottom: 16px;
+      font-size: 11px;
+      opacity: 0.35;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="emoji">🍺</div>
+  <h1>KIBUNYA</h1>
+  <p class="sub">
+    招待リンクを受け取りました。<br>
+    下のボタンをタップしてアプリを開いてください。
+  </p>
+  <p class="status" id="status">&nbsp;</p>
+
+  <a id="appOpenBtn" class="btn" href="#">
+    アプリを開く
+  </a>
+
+  <p class="note" id="note">
+    KIBUNYA がインストール済みならアプリが開きます。<br>
+    まだの方は、下から App Store で入手してください。
+  </p>
+  <p class="note">
+    <a id="storeLink" href="https://apps.apple.com/app/id6766822899">App Store で KIBUNYA を見る</a>
+  </p>
+  <p class="note">
+    App Store から入れた後は、<strong>もう一度このリンクを開いてください</strong>。<br>
+    インストールしただけでは友達登録は行われません。
+  </p>
+
+  <footer>© 2026 gokuyou-official</footer>
+
+  <script>
+    (function () {
+      // uid を抽出: パス '/invite/{uid}' を優先、なければクエリ '?uid=xxx'
+      var uid = null;
+      var pathMatch = location.pathname.match(/[/]invite[/]([^/?#]+)/);
+      if (pathMatch && pathMatch[1]) {
+        uid = decodeURIComponent(pathMatch[1]);
+      } else {
+        var params = new URLSearchParams(location.search);
+        var q = params.get('uid');
+        if (q) uid = q;
+      }
+
+      var statusEl = document.getElementById('status');
+      var appOpenBtn = document.getElementById('appOpenBtn');
+
+      if (!uid) {
+        statusEl.textContent = '招待リンクが正しくありません';
+        appOpenBtn.style.display = 'none';
+        return;
+      }
+
+      var APP_SCHEME_URL = 'kibunya://invite/' + encodeURIComponent(uid);
+
+      appOpenBtn.setAttribute('href', APP_SCHEME_URL);
+
+      // ★ App Store への自動遷移は行わない。
+      //
+      //   以前は「アプリを開く」を押した 1200ms 後に、アプリが起動した
+      //   形跡が無ければ App Store へ自動遷移していた。しかしアプリの
+      //   起動判定は visibilitychange / pagehide / blur に頼っており、
+      //   アプリ内ブラウザ (LINE 等) ではこれらが発火しないことがある。
+      //   その場合アプリが正常に起動していても App Store に飛ばされ、
+      //   ユーザーは App Store の「開く」からアプリを起動する。
+      //   この経路では招待リンクの uid が渡らないため、
+      //   インストールは済んでいるのに友達登録だけ起きない、という
+      //   分かりにくい失敗になる。
+      //
+      //   自動遷移をやめ、App Store へ行くかどうかはユーザーが
+      //   下のリンクを押して決める形にする。
+      //   kibunya:// を試すこと自体は残すので、アプリが入っている人の
+      //   体験は変わらない。
+      appOpenBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        statusEl.textContent = 'アプリを開いています...';
+        window.location.href = APP_SCHEME_URL;
+
+        // 押した後も画面が残っている場合の案内。ここでは遷移しない。
+        window.setTimeout(function () {
+          if (document.hidden) return;
+          statusEl.textContent = 'アプリが開かない場合は、下のリンクから App Store へ';
+        }, 1500);
+      });
+    })();
+  </script>
+
+</body>
+</html>

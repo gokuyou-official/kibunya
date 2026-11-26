@@ -1,0 +1,61 @@
+name: ASC Check (TestFlight testers & builds)
+
+# App Store Connect API v1 を叩いて、現在の TestFlight ビルド/テスター一覧を
+# 取得する確認用ワークフロー。手動起動 (workflow_dispatch) 専用。
+#
+# 必要な repository secrets:
+#   - ASC_ISSUER_ID : App Store Connect API の Issuer ID
+#   - ASC_KEY_ID    : API Key ID
+#   - ASC_P8_KEY    : AuthKey_<KEY_ID>.p8 の本文 (PEM, -----BEGIN〜END----- 含む)
+on:
+  workflow_dispatch:
+
+jobs:
+  asc-list:
+    name: Fetch builds & testers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate secrets
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+        run: |
+          missing=0
+          for name in ASC_ISSUER_ID ASC_KEY_ID ASC_P8_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ASC list script
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_P8_KEY: ${{ secrets.ASC_P8_KEY }}
+          ASC_APP_ID: '6766822899'
+          ASC_BUNDLE_ID: 'com.gokuyouofficial.kibunya'
+        run: |
+          set -o pipefail
+          # スクリプト出力を画面 + job summary の両方に。失敗時もログを残す。
+          {
+            echo "## App Store Connect Check"
+            echo ""
+            echo '```'
+            node scripts/asc-list.mjs
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
